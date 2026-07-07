@@ -381,6 +381,65 @@ def fetch_financial_lookup() -> dict[str, dict[str, Any]]:
     return lookup
 
 
+def forecast_notice_date(row: dict[str, Any]) -> str:
+    value = str(row.get("NOTICE_DATE", "") or "").strip()
+    return value[:10]
+
+
+def forecast_growth_value(row: dict[str, Any]) -> float | None:
+    return numeric_average(row.get("ADD_AMP_LOWER"), row.get("ADD_AMP_UPPER"), row.get("INCREASE_JZ"))
+
+
+def is_key_performance_forecast(row: dict[str, Any]) -> bool:
+    predict_type = str(row.get("PREDICT_TYPE", "") or "").strip()
+    if predict_type in {"扭亏", "首亏", "续亏"}:
+        return True
+    growth = forecast_growth_value(row)
+    return growth is not None and abs(growth) >= 50
+
+
+def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dict[str, str]]:
+    rows = fetch_eastmoney_pages(
+        "RPT_PUBLIC_OP_NEWPREDICT",
+        "(REPORT_DATE='2026-06-30')",
+        "NOTICE_DATE,SECURITY_CODE",
+        "-1,-1",
+    )
+    by_code: dict[str, dict[str, Any]] = {}
+    priority = {"004": 0, "002": 1, "005": 2, "006": 3}
+
+    for row in rows:
+        code = str(row.get("SECURITY_CODE", "") or "").strip()
+        notice_date = forecast_notice_date(row)
+        finance_code = str(row.get("PREDICT_FINANCE_CODE", "") or "").strip()
+        if not code or not notice_date or notice_date > cutoff_date:
+            continue
+        if not is_key_performance_forecast(row):
+            continue
+        current = by_code.get(code)
+        if current is None or priority.get(finance_code, 99) < priority.get(str(current.get("PREDICT_FINANCE_CODE", "")), 99):
+            by_code[code] = row
+
+    forecasts: list[dict[str, str]] = []
+    for row in by_code.values():
+        growth = forecast_growth_value(row)
+        forecasts.append(
+            {
+                "stock_code": str(row.get("SECURITY_CODE", "") or "").strip(),
+                "stock_name": str(row.get("SECURITY_NAME_ABBR", "") or "").strip(),
+                "notice_date": forecast_notice_date(row),
+                "predict_type": str(row.get("PREDICT_TYPE", "") or "").strip() or "业绩预告",
+                "finance": str(row.get("PREDICT_FINANCE", "") or "").strip(),
+                "amount": amount_range_to_yi(row.get("PREDICT_AMT_LOWER"), row.get("PREDICT_AMT_UPPER")),
+                "growth": arrow_pct_text(growth),
+                "growth_class": growth_class(row.get("ADD_AMP_LOWER"), row.get("ADD_AMP_UPPER"), row.get("INCREASE_JZ")),
+                "content": str(row.get("PREDICT_CONTENT", "") or "").strip(),
+            }
+        )
+    forecasts.sort(key=lambda item: (item["notice_date"], item["stock_code"]))
+    return forecasts
+
+
 def metric_html(label: str, amount: str, growth: str, klass: str, source: str) -> str:
     return (
         '<div class="metric">'
@@ -609,22 +668,29 @@ def write_html_report(
     total_rows: int,
     financial_lookup: dict[str, dict[str, Any]],
     sector_lookup: dict[str, list[str]],
+    performance_forecasts: list[dict[str, str]] | None = None,
     broker_lookup: dict[str, str] | None = None,
     static_site: bool = False,
     api_base: str = "http://127.0.0.1:8765",
 ) -> None:
     now = datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
     broker_lookup = broker_lookup or {}
+    performance_forecasts = performance_forecasts or []
     table_rows = []
     search_index = []
     detail_index: dict[str, dict[str, Any]] = {}
     count_by_date = {row["date"]: row["company_count"] for row in daily_rows}
+    forecast_groups: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for item in performance_forecasts:
+        if item.get("notice_date"):
+            forecast_groups[item["notice_date"]].append(item)
     early_by_date: dict[str, int] = {}
     for date, companies in groups.items():
         early_by_date[date] = sum(
             1 for company in companies if disclosure_status(company, date)["is_early"]
         )
-    parsed_dates = [datetime.strptime(row["date"], "%Y-%m-%d") for row in daily_rows]
+    all_dates = sorted(set(count_by_date) | set(forecast_groups))
+    parsed_dates = [datetime.strptime(date, "%Y-%m-%d") for date in all_dates]
     months = []
     if parsed_dates:
         month_cursor = datetime(parsed_dates[0].year, parsed_dates[0].month, 1)
@@ -643,22 +709,29 @@ def write_html_report(
             for day in week:
                 date_text = day.strftime("%Y-%m-%d")
                 count = count_by_date.get(date_text)
+                forecast_count = len(forecast_groups.get(date_text, []))
                 outside_class = " is-outside" if day.month != month else ""
-                if count:
+                if count or forecast_count:
                     early_count = early_by_date.get(date_text, 0)
                     early_badge = (
                         f'<span class="calendar-early">提前{html.escape(str(early_count))}家</span>'
                         if early_count
                         else ""
                     )
+                    forecast_badge = (
+                        f'<span class="calendar-forecast">预告{html.escape(str(forecast_count))}家</span>'
+                        if forecast_count
+                        else ""
+                    )
                     day_cells.append(
                         '<button class="calendar-day has-count{}" type="button" data-date="{}">'
-                        '<span class="calendar-date">{}</span><span class="calendar-count">{}家</span>{}</button>'.format(
+                        '<span class="calendar-date">{}</span>{}{}{}</button>'.format(
                             outside_class,
                             html.escape(date_text),
                             day.day,
-                            html.escape(count),
+                            f'<span class="calendar-count">{html.escape(str(count))}家</span>' if count else "",
                             early_badge,
+                            forecast_badge,
                         )
                     )
                 else:
@@ -677,8 +750,7 @@ def write_html_report(
                 "".join(day_cells),
             )
         )
-    for row in daily_rows:
-        date = row["date"]
+    for date in all_dates:
         companies = groups.get(date, [])
         for company in companies:
             metrics = metric_summary(company["stock_code"], financial_lookup)
@@ -746,21 +818,63 @@ def write_html_report(
             )
             for company in companies
         )
+        forecast_items = "\n".join(
+            '<tr class="forecast-row" id="forecast-{}" data-code="{}" data-date="{}">'
+            '<td><span class="code">{}</span><strong>{}</strong></td>'
+            '<td><span class="forecast-type">{}</span></td>'
+            '<td><span class="table-metric {}">{}</span><small>{}</small></td>'
+            '<td>{}</td>'
+            '<td class="forecast-content">{}</td>'
+            '</tr>'.format(
+                html.escape(item["stock_code"]),
+                html.escape(item["stock_code"]),
+                html.escape(date),
+                html.escape(item["stock_code"]),
+                html.escape(item["stock_name"]),
+                html.escape(item["predict_type"]),
+                html.escape(item["growth_class"]),
+                html.escape(item["growth"]),
+                html.escape(item["amount"]),
+                html.escape(item["finance"] or "归母/净利润"),
+                html.escape(item["content"]),
+            )
+            for item in forecast_groups.get(date, [])
+        )
+        schedule_block = (
+            '<div class="company-table-wrap">'
+            '<table class="company-table">'
+            '<thead><tr><th>股票</th><th>板块</th><th>评级</th><th>营收预测</th><th>利润预测</th><th>发布日期</th><th>状态</th><th>操作</th></tr></thead>'
+            f"<tbody>{company_items}</tbody>"
+            "</table>"
+            "</div>"
+            if company_items
+            else '<div class="empty-note">这一天暂无中报预约披露公司。</div>'
+        )
+        forecast_block = (
+            '<details class="forecast-details" open>'
+            '<summary>展开业绩预告列表</summary>'
+            '<div class="company-table-wrap">'
+            '<table class="company-table forecast-table">'
+            '<thead><tr><th>股票</th><th>预告类型</th><th>同比变化</th><th>指标</th><th>公告摘要</th></tr></thead>'
+            f"<tbody>{forecast_items}</tbody>"
+            "</table>"
+            "</div>"
+            "</details>"
+            if forecast_items
+            else ""
+        )
         table_rows.append(
             f"""
             <tr>
               <td class="date" id="date-{html.escape(date)}">{html.escape(date)}</td>
               <td class="count">
-                <strong>{html.escape(row["company_count"])}</strong>
+                <strong>{html.escape(str(count_by_date.get(date, 0)))}</strong>
+                {f'<span class="forecast-inline">业绩预告 {len(forecast_groups.get(date, []))} 家</span>' if forecast_groups.get(date) else ''}
                 <details>
                   <summary>展开企业列表</summary>
-                  <div class="company-table-wrap">
-                    <table class="company-table">
-                      <thead><tr><th>股票</th><th>板块</th><th>评级</th><th>营收预测</th><th>利润预测</th><th>发布日期</th><th>状态</th><th>操作</th></tr></thead>
-                      <tbody>{company_items}</tbody>
-                    </table>
-                  </div>
+                  {schedule_block}
                 </details>
+                {forecast_block}
               </td>
             </tr>
             """
@@ -803,6 +917,7 @@ def write_html_report(
     .calendar-date {{ display: block; color: #334155; font-weight: 700; }}
     .calendar-count {{ display: inline-block; margin-top: 8px; border-radius: 999px; background: #dcfce7; color: #166534; padding: 3px 8px; font-weight: 700; font-size: 13px; }}
     .calendar-early {{ display: inline-block; margin-top: 6px; border-radius: 999px; background: #fee2e2; color: #b91c1c; padding: 3px 8px; font-weight: 800; font-size: 12px; }}
+    .calendar-forecast {{ display: inline-block; margin-top: 6px; border-radius: 999px; background: #fef3c7; color: #92400e; padding: 3px 8px; font-weight: 800; font-size: 12px; }}
     .calendar-day.has-count {{ cursor: pointer; }}
     .calendar-day.has-count:hover {{ background: #f0fdf4; }}
     .calendar-day.is-empty {{ background: #f8fafc; }}
@@ -831,6 +946,11 @@ def write_html_report(
     .status-badge {{ display: inline-flex; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 800; white-space: nowrap; }}
     .status-normal {{ background: #eef2f7; color: #475569; }}
     .status-early {{ background: #fee2e2; color: #b91c1c; }}
+    .forecast-inline {{ display: inline-flex; margin-left: 10px; border-radius: 999px; padding: 3px 8px; background: #fef3c7; color: #92400e; font-size: 12px; font-weight: 800; }}
+    .forecast-details {{ margin-top: 12px; }}
+    .forecast-type {{ display: inline-flex; border-radius: 999px; padding: 3px 8px; background: #fff7ed; color: #c2410c; font-weight: 800; white-space: nowrap; }}
+    .forecast-content {{ min-width: 280px; color: #334155; font-size: 13px; line-height: 1.55; }}
+    .empty-note {{ margin-top: 10px; color: #64748b; font-size: 13px; }}
     .detail-button {{ border: 1px solid #0969da; border-radius: 6px; background: #0969da; color: #fff; padding: 6px 10px; cursor: pointer; font-size: 13px; white-space: nowrap; }}
     .detail-button:hover {{ background: #0550ae; }}
     .sector-tags {{ display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }}
@@ -904,6 +1024,7 @@ def write_html_report(
       <div>统计日期：首次预约日优先，若有变更/实际披露则取最新可用日期</div>
       <div class="refresh-card"><span>{'静态生成时间' if static_site else '抓取时间'}：{html.escape(now)}<span id="refreshStatus" class="refresh-status">{'；公开版不依赖本地服务' if static_site else ''}</span></span><button id="refreshButton" class="refresh-button" type="button"{' disabled' if static_site else ''}>{'静态版' if static_site else '抓取最新'}</button></div>
       <div>公司记录数：{total_rows}</div>
+      <div>7月15日前关键业绩预告：{len(performance_forecasts)} 家</div>
     </section>
     <section class="search-box">
       <input id="stockSearchInput" class="search-input" type="search" placeholder="输入股票代码、公司简称或名称，例如 600519 / 贵州茅台 / 茅台">
@@ -1236,6 +1357,7 @@ def main() -> int:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     raw_rows = fetch_sse_2026_midreport()
     financial_lookup = fetch_financial_lookup()
+    performance_forecasts = fetch_key_performance_forecasts()
     detail_rows = normalized_rows(raw_rows)
     sector_lookup = fetch_sector_lookup([row["stock_code"] for row in detail_rows])
 
@@ -1259,13 +1381,22 @@ def main() -> int:
 
     write_csv(detail_path, detail_rows, list(detail_rows[0].keys()) if detail_rows else [])
     write_csv(daily_path, daily_rows, ["date", "company_count"])
-    write_html_report(html_path, daily_rows, dict(groups), len(detail_rows), financial_lookup, sector_lookup)
+    write_html_report(
+        html_path,
+        daily_rows,
+        dict(groups),
+        len(detail_rows),
+        financial_lookup,
+        sector_lookup,
+        performance_forecasts=performance_forecasts,
+    )
 
     md_lines = [
         "# 沪市2026年中报预约披露日期统计",
         "",
         f"- 数据源：上海证券交易所定期报告预约情况",
         f"- 公司记录数：{len(detail_rows)}",
+        f"- 7月15日前关键业绩预告：{len(performance_forecasts)}",
         f"- 抓取时间：{datetime.now(CHINA_TZ).strftime('%Y-%m-%d %H:%M:%S')}",
         "",
         "| 日期 | 家数 |",

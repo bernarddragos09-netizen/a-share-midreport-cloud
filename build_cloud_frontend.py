@@ -9,7 +9,11 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from fetch_2026_midreport_upcoming_sse import fetch_financial_lookup, write_html_report
+from fetch_2026_midreport_upcoming_sse import (
+    fetch_financial_lookup,
+    fetch_key_performance_forecasts,
+    write_html_report,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -66,6 +70,7 @@ def main() -> int:
     daily_rows, groups, total_rows = load_report_rows()
     sector_lookup = load_sector_lookup()
     financial_lookup = fetch_financial_lookup()
+    performance_forecasts = fetch_key_performance_forecasts()
     write_html_report(
         CLOUD_FRONTEND_DIR / "index.html",
         daily_rows,
@@ -73,6 +78,7 @@ def main() -> int:
         total_rows,
         financial_lookup,
         sector_lookup,
+        performance_forecasts=performance_forecasts,
         broker_lookup={},
         static_site=False,
         api_base="/api",

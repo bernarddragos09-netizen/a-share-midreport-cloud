@@ -12,7 +12,11 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from fetch_2026_midreport_upcoming_sse import fetch_financial_lookup, write_html_report
+from fetch_2026_midreport_upcoming_sse import (
+    fetch_financial_lookup,
+    fetch_key_performance_forecasts,
+    write_html_report,
+)
 from update_report_server import fetch_broker_forecast_html
 
 
@@ -137,6 +141,8 @@ def main() -> int:
     print(f"Loaded report rows: {total_rows}; sectors: {len(sector_lookup)}")
     financial_lookup = fetch_financial_lookup()
     print(f"Loaded financial forecasts: {len(financial_lookup)}")
+    performance_forecasts = fetch_key_performance_forecasts()
+    print(f"Loaded key performance forecast notices: {len(performance_forecasts)}")
     broker_lookup = build_broker_lookup(codes)
     write_html_report(
         STATIC_DIR / "index.html",
@@ -145,6 +151,7 @@ def main() -> int:
         total_rows,
         financial_lookup,
         sector_lookup,
+        performance_forecasts=performance_forecasts,
         broker_lookup=broker_lookup,
         static_site=True,
     )
