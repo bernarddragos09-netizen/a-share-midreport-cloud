@@ -14,7 +14,7 @@ import json
 import sys
 import time
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 from urllib import parse, request
@@ -26,6 +26,7 @@ EASTMONEY_QUOTE_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 EASTMONEY_QUOTE_BATCH_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 REFERER = "https://www.sse.com.cn/disclosure/listedinfo/periodic/"
 OUTPUT_DIR = Path("a_share_midreport_2026_upcoming_sse")
+CHINA_TZ = timezone(timedelta(hours=8))
 
 SECTOR_RULES = [
     ("金融", ["银行", "保险", "证券", "多元金融", "期货", "信托", "金融"]),
@@ -588,7 +589,7 @@ def write_html_report(
     static_site: bool = False,
     api_base: str = "http://127.0.0.1:8765",
 ) -> None:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
     broker_lookup = broker_lookup or {}
     table_rows = []
     search_index = []
@@ -1212,7 +1213,7 @@ def main() -> int:
         "",
         f"- 数据源：上海证券交易所定期报告预约情况",
         f"- 公司记录数：{len(detail_rows)}",
-        f"- 抓取时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 抓取时间：{datetime.now(CHINA_TZ).strftime('%Y-%m-%d %H:%M:%S')}",
         "",
         "| 日期 | 家数 |",
         "| --- | ---: |",
