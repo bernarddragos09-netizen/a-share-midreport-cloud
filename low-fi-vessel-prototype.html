@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>智能船舶避碰系统低保真原型</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --paper: #ffffff;
+      --ink: #20242a;
+      --muted: #6c737f;
+      --line: #c9ced6;
+      --soft: #e8ebef;
+      --dark: #333941;
+      --risk: #111827;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 248px minmax(960px, 1fr);
+      gap: 24px;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .rail {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+      height: calc(100vh - 48px);
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    .brand {
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--soft);
+      margin-bottom: 16px;
+    }
+
+    .brand h1 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav a {
+      display: block;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 13px;
+      background: #fbfcfd;
+    }
+
+    .nav a:hover,
+    .nav a:focus {
+      background: var(--dark);
+      color: white;
+      outline: none;
+    }
+
+    main {
+      display: grid;
+      gap: 28px;
+      padding-bottom: 40px;
+    }
+
+    .screen {
+      width: 1180px;
+      min-height: 720px;
+      border: 2px solid var(--dark);
+      border-radius: var(--radius);
+      background: var(--paper);
+      overflow: hidden;
+    }
+
+    .screen-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 56px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--line);
+      background: #f7f8fa;
+    }
+
+    .screen-title h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .status {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pill {
+      min-width: 74px;
+      padding: 5px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      text-align: center;
+      background: white;
+    }
+
+    .layout {
+      display: grid;
+      gap: 14px;
+      padding: 14px;
+    }
+
+    .home-grid {
+      grid-template-columns: 150px 1fr 280px;
+      grid-template-rows: 570px 72px;
+    }
+
+    .route-grid {
+      grid-template-columns: 270px 1fr 290px;
+      grid-template-rows: 570px 72px;
+    }
+
+    .target-grid {
+      grid-template-columns: 1fr 350px;
+      grid-template-rows: 642px;
+    }
+
+    .warning-grid {
+      grid-template-columns: 1fr 330px;
+      grid-template-rows: 92px 466px 76px;
+    }
+
+    .avoid-grid {
+      grid-template-columns: 1fr 360px;
+      grid-template-rows: 570px 72px;
+    }
+
+    .log-grid {
+      grid-template-columns: 1fr 330px;
+      grid-template-rows: 92px 466px 76px;
+    }
+
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .box-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 38px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--soft);
+      background: #f9fafb;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .box-body {
+      padding: 12px;
+    }
+
+    .side-nav {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .side-nav div {
+      height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      background: #fbfcfd;
+    }
+
+    .map {
+      position: relative;
+      min-height: 100%;
+      background:
+        linear-gradient(var(--soft) 1px, transparent 1px) 0 0 / 42px 42px,
+        linear-gradient(90deg, var(--soft) 1px, transparent 1px) 0 0 / 42px 42px,
+        #fbfcfd;
+    }
+
+    .map::before,
+    .map::after {
+      content: "";
+      position: absolute;
+      border: 2px solid #98a1af;
+      border-radius: 50%;
+    }
+
+    .map::before {
+      width: 310px;
+      height: 310px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .map::after {
+      width: 480px;
+      height: 480px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      border-style: dashed;
+    }
+
+    .ship {
+      position: absolute;
+      left: 48%;
+      top: 48%;
+      width: 28px;
+      height: 48px;
+      border: 2px solid var(--dark);
+      border-radius: 16px 16px 6px 6px;
+      background: white;
+      transform: rotate(24deg);
+      z-index: 2;
+    }
+
+    .route-line {
+      position: absolute;
+      height: 0;
+      border-top: 3px solid var(--dark);
+      transform-origin: left center;
+      z-index: 1;
+    }
+
+    .route-line.a { width: 250px; left: 260px; top: 390px; transform: rotate(-28deg); }
+    .route-line.b { width: 220px; left: 470px; top: 280px; transform: rotate(12deg); }
+    .route-line.c { width: 180px; left: 640px; top: 327px; transform: rotate(-18deg); border-style: dashed; }
+
+    .waypoint,
+    .target-dot {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--dark);
+      border-radius: 50%;
+      background: white;
+      z-index: 3;
+    }
+
+    .w1 { left: 250px; top: 382px; }
+    .w2 { left: 464px; top: 276px; }
+    .w3 { left: 688px; top: 324px; }
+    .w4 { left: 815px; top: 286px; }
+
+    .t1 { left: 350px; top: 190px; }
+    .t2 { left: 610px; top: 420px; }
+    .t3 { left: 730px; top: 170px; }
+    .t4 { left: 240px; top: 500px; }
+
+    .label {
+      position: absolute;
+      padding: 4px 6px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: white;
+      color: var(--muted);
+      font-size: 12px;
+      z-index: 4;
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      grid-column: 1 / -1;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: #fbfcfd;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 18px;
+    }
+
+    .list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .item {
+      display: grid;
+      gap: 5px;
+      padding: 10px;
+      border: 1px solid var(--soft);
+      border-radius: 5px;
+      background: #fbfcfd;
+      font-size: 12px;
+    }
+
+    .item strong {
+      font-size: 13px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .table th,
+    .table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--soft);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .table th {
+      color: var(--muted);
+      font-weight: 600;
+      background: #fafafa;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: flex-end;
+      grid-column: 1 / -1;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfcfd;
+    }
+
+    .button {
+      min-width: 112px;
+      height: 42px;
+      border: 1px solid var(--dark);
+      border-radius: 5px;
+      display: grid;
+      place-items: center;
+      background: white;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .button.primary {
+      background: var(--dark);
+      color: white;
+    }
+
+    .alert-banner {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      padding: 16px 18px;
+      border: 2px solid var(--risk);
+      border-radius: 6px;
+      background: #f3f4f6;
+    }
+
+    .alert-banner h3 {
+      margin: 0 0 4px;
+      font-size: 20px;
+    }
+
+    .alert-banner p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .danger-mark {
+      display: grid;
+      place-items: center;
+      width: 72px;
+      height: 48px;
+      border: 2px solid var(--dark);
+      border-radius: 4px;
+      font-size: 18px;
+      font-weight: 800;
+      background: white;
+    }
+
+    .relative-map {
+      position: relative;
+      height: 100%;
+      background:
+        radial-gradient(circle at center, transparent 0 120px, #e8ebef 121px 122px, transparent 123px),
+        radial-gradient(circle at center, transparent 0 230px, #d6dbe2 231px 232px, transparent 233px),
+        #fbfcfd;
+    }
+
+    .vector {
+      position: absolute;
+      height: 0;
+      border-top: 3px solid var(--dark);
+      transform-origin: left center;
+    }
+
+    .vector.own { width: 260px; left: 330px; top: 250px; transform: rotate(-15deg); }
+    .vector.other { width: 230px; left: 650px; top: 180px; transform: rotate(138deg); border-top-style: dashed; }
+
+    .ship-big,
+    .ship-other {
+      position: absolute;
+      width: 42px;
+      height: 72px;
+      border: 2px solid var(--dark);
+      background: white;
+    }
+
+    .ship-big {
+      left: 330px;
+      top: 225px;
+      border-radius: 22px 22px 8px 8px;
+      transform: rotate(75deg);
+    }
+
+    .ship-other {
+      left: 650px;
+      top: 155px;
+      border-radius: 22px 22px 8px 8px;
+      transform: rotate(-40deg);
+    }
+
+    .comparison {
+      position: relative;
+      height: 100%;
+      background:
+        linear-gradient(var(--soft) 1px, transparent 1px) 0 0 / 44px 44px,
+        linear-gradient(90deg, var(--soft) 1px, transparent 1px) 0 0 / 44px 44px,
+        #fbfcfd;
+    }
+
+    .old-route,
+    .new-route {
+      position: absolute;
+      height: 0;
+      left: 120px;
+      border-top: 4px solid var(--dark);
+      transform-origin: left center;
+    }
+
+    .old-route { width: 620px; top: 290px; transform: rotate(-10deg); border-top-style: dashed; }
+    .new-route.one { width: 230px; top: 330px; transform: rotate(-32deg); }
+    .new-route.two { width: 240px; left: 315px; top: 215px; transform: rotate(12deg); }
+    .new-route.three { width: 240px; left: 545px; top: 265px; transform: rotate(-8deg); }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+      padding-left: 10px;
+    }
+
+    .log-entry {
+      position: relative;
+      padding: 12px 12px 12px 18px;
+      border: 1px solid var(--soft);
+      border-radius: 5px;
+      background: #fbfcfd;
+      font-size: 12px;
+    }
+
+    .log-entry::before {
+      content: "";
+      position: absolute;
+      left: -6px;
+      top: 16px;
+      width: 10px;
+      height: 10px;
+      border: 2px solid var(--dark);
+      border-radius: 50%;
+      background: white;
+    }
+
+    @media (max-width: 980px) {
+      .app {
+        grid-template-columns: 1fr;
+        padding: 12px;
+      }
+
+      .rail {
+        position: static;
+        height: auto;
+      }
+
+      .nav {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      main {
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="brand">
+        <h1>低保真原型页面规划</h1>
+        <p>智能船舶航行监测与避碰决策系统。共 6 页，适合截图提交或迁移到 Figma。</p>
+      </div>
+      <nav class="nav" aria-label="页面导航">
+        <a href="#home">01 首页总览</a>
+        <a href="#route">02 航线规划</a>
+        <a href="#target">03 目标监测</a>
+        <a href="#warning">04 碰撞预警详情</a>
+        <a href="#avoid">05 避让方案推荐</a>
+        <a href="#log">06 处理反馈与日志</a>
+      </nav>
+    </aside>
+
+    <main>
+      <section class="screen" id="home">
+        <header class="screen-title">
+          <h2>页面1：首页总览</h2>
+          <div class="status">
+            <span>远洋一号</span><span>14:32:18</span><span class="pill">网络正常</span><span class="pill">自动航行</span>
+          </div>
+        </header>
+        <div class="layout home-grid">
+          <aside class="box">
+            <div class="box-head">功能导航</div>
+            <div class="side-nav">
+              <div>首页总览</div><div>航线规划</div><div>目标监测</div><div>预警中心</div><div>避让方案</div><div>日志报告</div>
+            </div>
+          </aside>
+          <div class="box map">
+            <div class="box-head">电子海图 / 本船位置 / 航线</div>
+            <div class="ship"></div>
+            <div class="route-line a"></div><div class="route-line b"></div><div class="route-line c"></div>
+            <div class="waypoint w1"></div><div class="waypoint w2"></div><div class="waypoint w3"></div><div class="waypoint w4"></div>
+            <div class="target-dot t1"></div><div class="target-dot t2"></div><div class="target-dot t3"></div>
+            <div class="label" style="left: 380px; top: 250px;">当前船位 N31.22 E121.48</div>
+            <div class="label" style="left: 680px; top: 410px;">周边目标 12</div>
+          </div>
+          <aside class="box">
+            <div class="box-head">告警摘要 / 风险目标</div>
+            <div class="box-body list">
+              <div class="item"><strong>高风险碰撞预警</strong><span>目标：海盛 208 / TCPA 18 分钟</span></div>
+              <div class="item"><strong>航线偏差提醒</strong><span>偏差：0.18 nm / 持续 4 分钟</span></div>
+              <div class="item"><strong>能见度下降</strong><span>雾区边缘 / 建议降低航速</span></div>
+              <div class="item"><strong>风险目标排序</strong><span>高 1 / 中 3 / 低 8</span></div>
+            </div>
+          </aside>
+          <div class="metric-row">
+            <div class="metric"><span>航速</span><strong>12.6 kn</strong></div>
+            <div class="metric"><span>航向</span><strong>068°</strong></div>
+            <div class="metric"><span>风浪</span><strong>东北风 4 级</strong></div>
+            <div class="metric"><span>能见度</span><strong>3.2 nm</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="route">
+        <header class="screen-title">
+          <h2>页面2：航线规划页</h2>
+          <div class="status"><span>当前航线：上海港 → 宁波外海</span><span class="pill">规划中</span></div>
+        </header>
+        <div class="layout route-grid">
+          <aside class="box">
+            <div class="box-head">航点列表</div>
+            <div class="box-body">
+              <table class="table">
+                <tr><th>航点</th><th>ETA</th><th>状态</th></tr>
+                <tr><td>WP01</td><td>14:50</td><td>已通过</td></tr>
+                <tr><td>WP02</td><td>15:35</td><td>当前</td></tr>
+                <tr><td>WP03</td><td>16:10</td><td>待达</td></tr>
+                <tr><td>WP04</td><td>17:20</td><td>待达</td></tr>
+                <tr><td>WP05</td><td>18:45</td><td>待达</td></tr>
+              </table>
+            </div>
+          </aside>
+          <div class="box map">
+            <div class="box-head">航线地图</div>
+            <div class="ship"></div>
+            <div class="route-line a"></div><div class="route-line b"></div><div class="route-line c"></div>
+            <div class="waypoint w1"></div><div class="waypoint w2"></div><div class="waypoint w3"></div><div class="waypoint w4"></div>
+            <div class="label" style="left: 300px; top: 420px;">WP01</div>
+            <div class="label" style="left: 500px; top: 240px;">WP02</div>
+            <div class="label" style="left: 720px; top: 330px;">WP03</div>
+          </div>
+          <aside class="box">
+            <div class="box-head">航线详情 / 风险提示</div>
+            <div class="box-body list">
+              <div class="item"><strong>预计到达</strong><span>2026-06-22 18:45</span></div>
+              <div class="item"><strong>航线偏差</strong><span>右偏 0.18 nm / 可接受</span></div>
+              <div class="item"><strong>风险水域</strong><span>WP03 附近船流密集</span></div>
+              <div class="item"><strong>建议</strong><span>通过 WP02 后提前 8° 调整航向</span></div>
+            </div>
+          </aside>
+          <div class="actions"><div class="button">编辑航线</div><div class="button primary">保存航线</div><div class="button">重新规划</div></div>
+        </div>
+      </section>
+
+      <section class="screen" id="target">
+        <header class="screen-title">
+          <h2>页面3：目标监测页</h2>
+          <div class="status"><span>AIS 目标 8</span><span>雷达目标 4</span><span class="pill">融合显示</span></div>
+        </header>
+        <div class="layout target-grid">
+          <div class="box map">
+            <div class="box-head">雷达 / 海图融合视图</div>
+            <div class="ship"></div>
+            <div class="target-dot t1"></div><div class="target-dot t2"></div><div class="target-dot t3"></div><div class="target-dot t4"></div>
+            <div class="label" style="left: 350px; top: 170px;">AIS-01</div>
+            <div class="label" style="left: 610px; top: 398px;">RAD-03</div>
+            <div class="label" style="left: 730px; top: 148px;">AIS-05</div>
+          </div>
+          <aside class="box">
+            <div class="box-head">周边船舶列表 / 风险排序</div>
+            <div class="box-body">
+              <table class="table">
+                <tr><th>船名</th><th>距离</th><th>航速</th><th>航向</th><th>风险</th></tr>
+                <tr><td>海盛208</td><td>1.8nm</td><td>10.2</td><td>245°</td><td>高</td></tr>
+                <tr><td>东港17</td><td>3.4nm</td><td>8.5</td><td>082°</td><td>中</td></tr>
+                <tr><td>远航66</td><td>4.1nm</td><td>12.1</td><td>031°</td><td>中</td></tr>
+                <tr><td>宁海03</td><td>5.8nm</td><td>7.4</td><td>190°</td><td>低</td></tr>
+                <tr><td>雷达T04</td><td>6.2nm</td><td>--</td><td>--</td><td>低</td></tr>
+              </table>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="screen" id="warning">
+        <header class="screen-title">
+          <h2>页面4：碰撞预警详情页</h2>
+          <div class="status"><span>告警编号：COL-20260622-014</span><span class="pill">待处理</span></div>
+        </header>
+        <div class="layout warning-grid">
+          <div class="alert-banner">
+            <div><h3>高风险碰撞预警</h3><p>目标船舶海盛208将与本船形成交叉会遇，需要立即评估避让方案。</p></div>
+            <div class="danger-mark">高</div>
+          </div>
+          <div class="box relative-map">
+            <div class="box-head">本船与目标船相对位置</div>
+            <div class="ship-big"></div><div class="ship-other"></div>
+            <div class="vector own"></div><div class="vector other"></div>
+            <div class="label" style="left: 300px; top: 315px;">本船 12.6kn / 068°</div>
+            <div class="label" style="left: 590px; top: 120px;">海盛208 10.2kn / 245°</div>
+            <div class="label" style="left: 470px; top: 220px;">DCPA 0.32nm / TCPA 18min</div>
+          </div>
+          <aside class="box">
+            <div class="box-head">目标详情 / 关联数据</div>
+            <div class="box-body list">
+              <div class="item"><strong>船名</strong><span>海盛208 / MMSI 413000208</span></div>
+              <div class="item"><strong>最近会遇距离</strong><span>0.32 nm</span></div>
+              <div class="item"><strong>预计会遇时间</strong><span>14:50，约 18 分钟后</span></div>
+              <div class="item"><strong>AIS 数据</strong><span>航向 245° / 航速 10.2kn</span></div>
+              <div class="item"><strong>雷达数据</strong><span>距离 1.8nm / 方位 043°</span></div>
+            </div>
+          </aside>
+          <div class="actions"><div class="button primary">查看方案</div><div class="button">暂缓处理</div><div class="button">通知船长</div></div>
+        </div>
+      </section>
+
+      <section class="screen" id="avoid">
+        <header class="screen-title">
+          <h2>页面5：避让方案推荐页</h2>
+          <div class="status"><span>关联告警：COL-20260622-014</span><span class="pill">推荐 A</span></div>
+        </header>
+        <div class="layout avoid-grid">
+          <div class="box comparison">
+            <div class="box-head">原航线与新航线对比</div>
+            <div class="old-route"></div>
+            <div class="new-route one"></div><div class="new-route two"></div><div class="new-route three"></div>
+            <div class="ship" style="left: 250px; top: 300px;"></div>
+            <div class="target-dot" style="left: 610px; top: 245px;"></div>
+            <div class="label" style="left: 130px; top: 300px;">原航线</div>
+            <div class="label" style="left: 420px; top: 180px;">方案A：右转 12°</div>
+            <div class="label" style="left: 590px; top: 285px;">风险解除点</div>
+          </div>
+          <aside class="box">
+            <div class="box-head">推荐方案 A / B / C</div>
+            <div class="box-body list">
+              <div class="item"><strong>方案 A：右转 12°，保持 8 分钟</strong><span>风险解除时间：14:47 / 对 ETA 影响小</span></div>
+              <div class="item"><strong>方案 B：减速至 9kn</strong><span>风险解除时间：14:52 / ETA 延后 12 分钟</span></div>
+              <div class="item"><strong>方案 C：左转 8° 后恢复</strong><span>风险解除时间：14:49 / 需人工确认</span></div>
+              <div class="item"><strong>系统建议</strong><span>优先执行方案 A，并持续监测 DCPA 变化</span></div>
+            </div>
+          </aside>
+          <div class="actions"><div class="button primary">确认执行</div><div class="button">修改方案</div><div class="button">取消</div></div>
+        </div>
+      </section>
+
+      <section class="screen" id="log">
+        <header class="screen-title">
+          <h2>页面6：处理反馈与日志页</h2>
+          <div class="status"><span>事件编号：COL-20260622-014</span><span class="pill">已完成</span></div>
+        </header>
+        <div class="layout log-grid">
+          <div class="alert-banner">
+            <div><h3>处理完成：风险已解除</h3><p>系统检测到 DCPA 提升至 1.24 nm，目标船舶已脱离高风险会遇区域。</p></div>
+            <div class="danger-mark">解除</div>
+          </div>
+          <div class="box">
+            <div class="box-head">事件处理记录</div>
+            <div class="box-body timeline">
+              <div class="log-entry"><strong>14:32 告警生成</strong><br>系统识别海盛208与本船存在高风险交叉会遇。</div>
+              <div class="log-entry"><strong>14:34 方案确认</strong><br>操作人：值班驾驶员张三；选择方案 A：右转 12°。</div>
+              <div class="log-entry"><strong>14:35 指令执行</strong><br>自动舵调整航向至 080°，系统进入持续监测状态。</div>
+              <div class="log-entry"><strong>14:47 风险解除</strong><br>DCPA 提升至 1.24 nm，TCPA 风险等级降为低。</div>
+              <div class="log-entry"><strong>14:48 日志生成</strong><br>自动生成事件报告，待上传岸基中心。</div>
+            </div>
+          </div>
+          <aside class="box">
+            <div class="box-head">系统反馈</div>
+            <div class="box-body list">
+              <div class="item"><strong>风险是否解除</strong><span>是 / 解除时间 14:47</span></div>
+              <div class="item"><strong>操作人</strong><span>值班驾驶员 张三</span></div>
+              <div class="item"><strong>操作方案</strong><span>方案 A：右转 12°</span></div>
+              <div class="item"><strong>岸基中心</strong><span>待上传 / 网络正常</span></div>
+              <div class="item"><strong>报告状态</strong><span>已生成草稿</span></div>
+            </div>
+          </aside>
+          <div class="actions"><div class="button primary">生成报告</div><div class="button">上传岸基中心</div><div class="button">返回首页</div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
