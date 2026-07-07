@@ -22,8 +22,13 @@ def clean_html_text(value: str) -> str:
 
 
 def load_sector_lookup() -> dict[str, list[str]]:
-    report_path = DATA_DIR / "report_sse_2026_midreport.html"
-    if not report_path.exists():
+    report_paths = [
+        ROOT / "a_share_midreport_cloud" / "frontend" / "index.html",
+        ROOT / "a_share_midreport_2026_static_site" / "index.html",
+        DATA_DIR / "report_sse_2026_midreport.html",
+    ]
+    report_path = next((path for path in report_paths if path.exists()), None)
+    if not report_path:
         return {}
     document = report_path.read_text(encoding="utf-8")
     lookup: dict[str, list[str]] = {}
@@ -49,9 +54,7 @@ def load_report_rows() -> tuple[list[dict[str, str]], dict[str, list[dict[str, s
         date = row.get("stat_date", "")
         if date:
             counts[date] += 1
-            groups[date].append(
-                {"stock_code": row.get("stock_code", ""), "stock_name": row.get("stock_name", "")}
-            )
+            groups[date].append(row)
     for companies in groups.values():
         companies.sort(key=lambda item: item["stock_code"])
     daily_rows = [{"date": date, "company_count": str(counts[date])} for date in sorted(counts)]

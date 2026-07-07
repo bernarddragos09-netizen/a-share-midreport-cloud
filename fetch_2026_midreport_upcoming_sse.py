@@ -571,6 +571,30 @@ def ai_summary_for(item: dict[str, Any]) -> str:
     return "，".join(parts) + "，建议重点看披露当天是否兑现预期。"
 
 
+def disclosure_status(company: dict[str, str], date: str) -> dict[str, str]:
+    first_date = company.get("first_appointment_date", "") or date
+    actual_date = company.get("actual_disclosure_date", "")
+    is_early = bool(first_date and date and date < first_date)
+    if actual_date:
+        if first_date and actual_date < first_date:
+            label = "提前披露"
+        elif first_date and actual_date > first_date:
+            label = "延期披露"
+        else:
+            label = "已披露"
+    elif is_early:
+        label = "提前安排"
+    else:
+        label = "预约披露"
+    return {
+        "label": label,
+        "class_name": "status-early" if is_early or label == "提前披露" else "status-normal",
+        "first_date": first_date,
+        "actual_date": actual_date,
+        "is_early": "1" if is_early or label == "提前披露" else "",
+    }
+
+
 def write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> None:
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -595,6 +619,11 @@ def write_html_report(
     search_index = []
     detail_index: dict[str, dict[str, Any]] = {}
     count_by_date = {row["date"]: row["company_count"] for row in daily_rows}
+    early_by_date: dict[str, int] = {}
+    for date, companies in groups.items():
+        early_by_date[date] = sum(
+            1 for company in companies if disclosure_status(company, date)["is_early"]
+        )
     parsed_dates = [datetime.strptime(row["date"], "%Y-%m-%d") for row in daily_rows]
     months = []
     if parsed_dates:
@@ -616,13 +645,20 @@ def write_html_report(
                 count = count_by_date.get(date_text)
                 outside_class = " is-outside" if day.month != month else ""
                 if count:
+                    early_count = early_by_date.get(date_text, 0)
+                    early_badge = (
+                        f'<span class="calendar-early">提前{html.escape(str(early_count))}家</span>'
+                        if early_count
+                        else ""
+                    )
                     day_cells.append(
                         '<button class="calendar-day has-count{}" type="button" data-date="{}">'
-                        '<span class="calendar-date">{}</span><span class="calendar-count">{}家</span></button>'.format(
+                        '<span class="calendar-date">{}</span><span class="calendar-count">{}家</span>{}</button>'.format(
                             outside_class,
                             html.escape(date_text),
                             day.day,
                             html.escape(count),
+                            early_badge,
                         )
                     )
                 else:
@@ -647,11 +683,16 @@ def write_html_report(
         for company in companies:
             metrics = metric_summary(company["stock_code"], financial_lookup)
             sectors = sector_lookup.get(company["stock_code"], ["综合"])
+            status = disclosure_status(company, date)
             detail_item = {
                 "code": company["stock_code"],
                 "name": company["stock_name"],
                 "initials": chinese_initials(company["stock_name"]),
                 "date": date,
+                "first_date": status["first_date"],
+                "actual_date": status["actual_date"],
+                "schedule_status": status["label"],
+                "schedule_class": status["class_name"],
                 "sectors": sectors,
                 "stars": star_rating(metrics.get("profit_growth")),
                 **metrics,
@@ -674,6 +715,7 @@ def write_html_report(
             '<td><span class="table-metric {}">{}</span><small>{}</small></td>'
             '<td><span class="table-metric {}">{}</span><small>{}</small></td>'
             '<td class="date-cell">{}</td>'
+            '<td><span class="status-badge {}">{}</span><small>{}</small></td>'
             '<td><button class="detail-button" type="button" data-code="{}">查看详情 →</button></td>'
             '</tr>'.format(
                 html.escape(detail_index[company["stock_code"]]["code"]),
@@ -693,6 +735,13 @@ def write_html_report(
                 html.escape(detail_index[company["stock_code"]]["profit_text"]),
                 html.escape(detail_index[company["stock_code"]]["profit_amount"]),
                 html.escape(date),
+                html.escape(detail_index[company["stock_code"]]["schedule_class"]),
+                html.escape(detail_index[company["stock_code"]]["schedule_status"]),
+                (
+                    "原预约 " + html.escape(detail_index[company["stock_code"]]["first_date"])
+                    if detail_index[company["stock_code"]]["first_date"] != date
+                    else "按预约"
+                ),
                 html.escape(detail_index[company["stock_code"]]["code"]),
             )
             for company in companies
@@ -707,7 +756,7 @@ def write_html_report(
                   <summary>展开企业列表</summary>
                   <div class="company-table-wrap">
                     <table class="company-table">
-                      <thead><tr><th>股票</th><th>板块</th><th>评级</th><th>营收预测</th><th>利润预测</th><th>发布日期</th><th>操作</th></tr></thead>
+                      <thead><tr><th>股票</th><th>板块</th><th>评级</th><th>营收预测</th><th>利润预测</th><th>发布日期</th><th>状态</th><th>操作</th></tr></thead>
                       <tbody>{company_items}</tbody>
                     </table>
                   </div>
@@ -753,6 +802,7 @@ def write_html_report(
     .calendar-day:nth-child(7n) {{ border-right: 0; }}
     .calendar-date {{ display: block; color: #334155; font-weight: 700; }}
     .calendar-count {{ display: inline-block; margin-top: 8px; border-radius: 999px; background: #dcfce7; color: #166534; padding: 3px 8px; font-weight: 700; font-size: 13px; }}
+    .calendar-early {{ display: inline-block; margin-top: 6px; border-radius: 999px; background: #fee2e2; color: #b91c1c; padding: 3px 8px; font-weight: 800; font-size: 12px; }}
     .calendar-day.has-count {{ cursor: pointer; }}
     .calendar-day.has-count:hover {{ background: #f0fdf4; }}
     .calendar-day.is-empty {{ background: #f8fafc; }}
@@ -778,6 +828,9 @@ def write_html_report(
     .table-metric {{ display: block; font-weight: 800; white-space: nowrap; }}
     .company-table small {{ display: block; margin-top: 2px; color: #6b7280; font-size: 12px; }}
     .date-cell {{ white-space: nowrap; font-variant-numeric: tabular-nums; color: #374151; }}
+    .status-badge {{ display: inline-flex; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 800; white-space: nowrap; }}
+    .status-normal {{ background: #eef2f7; color: #475569; }}
+    .status-early {{ background: #fee2e2; color: #b91c1c; }}
     .detail-button {{ border: 1px solid #0969da; border-radius: 6px; background: #0969da; color: #fff; padding: 6px 10px; cursor: pointer; font-size: 13px; white-space: nowrap; }}
     .detail-button:hover {{ background: #0550ae; }}
     .sector-tags {{ display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }}
@@ -1039,6 +1092,8 @@ def write_html_report(
             <div class="detail-block">
               <div class="detail-label">发布日期</div>
               <div class="detail-value">${{escapeHtml(item.date)}}</div>
+              <strong class="${{escapeHtml(item.schedule_class)}} status-badge">${{escapeHtml(item.schedule_status)}}</strong>
+              <div class="detail-label">原预约：${{escapeHtml(item.first_date || item.date)}}</div>
             </div>
             <div class="detail-block">
               <div class="detail-label">营收</div>
@@ -1188,9 +1243,7 @@ def main() -> int:
     groups: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in detail_rows:
         if row["stat_date"]:
-            groups[row["stat_date"]].append(
-                {"stock_code": row["stock_code"], "stock_name": row["stock_name"]}
-            )
+            groups[row["stat_date"]].append(row)
     for companies in groups.values():
         companies.sort(key=lambda item: item["stock_code"])
 

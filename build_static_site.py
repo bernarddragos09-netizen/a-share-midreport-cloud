@@ -59,7 +59,7 @@ def load_report_rows() -> tuple[list[dict[str, str]], dict[str, list[dict[str, s
             codes.append(code)
         if date:
             counts[date] += 1
-            groups[date].append({"stock_code": code, "stock_name": row.get("stock_name", "")})
+            groups[date].append(row)
     for companies in groups.values():
         companies.sort(key=lambda item: item["stock_code"])
     daily_rows = [{"date": date, "company_count": str(counts[date])} for date in sorted(counts)]
