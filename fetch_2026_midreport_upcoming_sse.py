@@ -422,27 +422,35 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
         "-1,-1",
     )
     q1_lookup = fetch_q1_deduct_profit_lookup()
-    by_code: dict[str, dict[str, Any]] = {}
+    rows_by_code: dict[str, list[dict[str, Any]]] = defaultdict(list)
     priority = {"005": 0, "004": 1, "002": 2, "006": 3}
 
     for row in rows:
         code = str(row.get("SECURITY_CODE", "") or "").strip()
         notice_date = forecast_notice_date(row)
-        finance_code = str(row.get("PREDICT_FINANCE_CODE", "") or "").strip()
         if not code or not notice_date or notice_date > cutoff_date:
             continue
-        if not is_key_performance_forecast(row):
-            continue
-        current = by_code.get(code)
-        if current is None or priority.get(finance_code, 99) < priority.get(str(current.get("PREDICT_FINANCE_CODE", "")), 99):
-            by_code[code] = row
+        rows_by_code[code].append(row)
 
     forecasts: list[dict[str, str]] = []
-    for row in by_code.values():
+    for code, code_rows in rows_by_code.items():
+        trigger_rows = [row for row in code_rows if is_key_performance_forecast(row)]
+        if not trigger_rows:
+            continue
+        row = min(
+            code_rows,
+            key=lambda item: priority.get(str(item.get("PREDICT_FINANCE_CODE", "") or "").strip(), 99),
+        )
+        trigger_row = min(
+            trigger_rows,
+            key=lambda item: priority.get(str(item.get("PREDICT_FINANCE_CODE", "") or "").strip(), 99),
+        )
         code = str(row.get("SECURITY_CODE", "") or "").strip()
         finance_code = str(row.get("PREDICT_FINANCE_CODE", "") or "").strip()
         q1_row = q1_lookup.get(code, {})
         growth = forecast_growth_value(row)
+        trigger_finance = str(trigger_row.get("PREDICT_FINANCE", "") or "").strip()
+        trigger_growth = forecast_growth_value(trigger_row)
         forecasts.append(
             {
                 "stock_code": code,
@@ -457,6 +465,11 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
                 "q1_deduct_profit": amount_to_yi(q1_row.get("DEDUCT_PARENT_NETPROFIT")),
                 "q1_deduct_yoy": pct_text(q1_row.get("DPN_RATIO")),
                 "q1_deduct_class": growth_class(q1_row.get("DPN_RATIO")),
+                "trigger_reason": (
+                    f"触发口径：{trigger_finance or '业绩预告'} {arrow_pct_text(trigger_growth)}"
+                    if trigger_row is not row
+                    else ""
+                ),
                 "content": str(row.get("PREDICT_CONTENT", "") or "").strip(),
             }
         )
@@ -849,7 +862,7 @@ def write_html_report(
             '<td><span class="table-metric {}">{}</span><small>{}</small><small>{}</small></td>'
             '<td><span class="table-metric">{}</span><small class="{}">{}</small></td>'
             '<td>{}</td>'
-            '<td class="forecast-content">{}</td>'
+            '<td class="forecast-content">{}{}</td>'
             '</tr>'.format(
                 html.escape(item["stock_code"]),
                 html.escape(item["stock_code"]),
@@ -865,6 +878,7 @@ def write_html_report(
                 html.escape(item["q1_deduct_class"]),
                 html.escape(item["q1_deduct_yoy"]),
                 html.escape(item["finance"] or "归母/净利润"),
+                f'<div class="trigger-reason">{html.escape(item["trigger_reason"])}</div>' if item.get("trigger_reason") else "",
                 html.escape(item["content"]),
             )
             for item in forecast_groups.get(date, [])
@@ -979,6 +993,7 @@ def write_html_report(
     .forecast-details {{ margin-top: 12px; }}
     .forecast-type {{ display: inline-flex; border-radius: 999px; padding: 3px 8px; background: #fff7ed; color: #c2410c; font-weight: 800; white-space: nowrap; }}
     .forecast-content {{ min-width: 280px; color: #334155; font-size: 13px; line-height: 1.55; }}
+    .trigger-reason {{ margin-bottom: 4px; color: #92400e; font-weight: 800; }}
     .empty-note {{ margin-top: 10px; color: #64748b; font-size: 13px; }}
     .detail-button {{ border: 1px solid #0969da; border-radius: 6px; background: #0969da; color: #fff; padding: 6px 10px; cursor: pointer; font-size: 13px; white-space: nowrap; }}
     .detail-button:hover {{ background: #0550ae; }}
