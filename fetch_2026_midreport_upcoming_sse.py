@@ -381,6 +381,22 @@ def fetch_financial_lookup() -> dict[str, dict[str, Any]]:
     return lookup
 
 
+def fetch_q1_deduct_profit_lookup() -> dict[str, dict[str, Any]]:
+    rows = fetch_eastmoney_pages(
+        "RPT_DMSK_FN_INCOME",
+        "(REPORT_DATE='2026-03-31')",
+        "NOTICE_DATE,SECURITY_CODE",
+        "-1,1",
+    )
+    lookup: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        code = str(row.get("SECURITY_CODE", "") or "").strip()
+        if not code:
+            continue
+        lookup[code] = row
+    return lookup
+
+
 def forecast_notice_date(row: dict[str, Any]) -> str:
     value = str(row.get("NOTICE_DATE", "") or "").strip()
     return value[:10]
@@ -405,8 +421,9 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
         "NOTICE_DATE,SECURITY_CODE",
         "-1,-1",
     )
+    q1_lookup = fetch_q1_deduct_profit_lookup()
     by_code: dict[str, dict[str, Any]] = {}
-    priority = {"004": 0, "002": 1, "005": 2, "006": 3}
+    priority = {"005": 0, "004": 1, "002": 2, "006": 3}
 
     for row in rows:
         code = str(row.get("SECURITY_CODE", "") or "").strip()
@@ -422,17 +439,24 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
 
     forecasts: list[dict[str, str]] = []
     for row in by_code.values():
+        code = str(row.get("SECURITY_CODE", "") or "").strip()
+        finance_code = str(row.get("PREDICT_FINANCE_CODE", "") or "").strip()
+        q1_row = q1_lookup.get(code, {})
         growth = forecast_growth_value(row)
         forecasts.append(
             {
-                "stock_code": str(row.get("SECURITY_CODE", "") or "").strip(),
+                "stock_code": code,
                 "stock_name": str(row.get("SECURITY_NAME_ABBR", "") or "").strip(),
                 "notice_date": forecast_notice_date(row),
                 "predict_type": str(row.get("PREDICT_TYPE", "") or "").strip() or "业绩预告",
+                "forecast_basis": "扣非归母净利润" if finance_code == "005" else "归母净利润口径",
                 "finance": str(row.get("PREDICT_FINANCE", "") or "").strip(),
                 "amount": amount_range_to_yi(row.get("PREDICT_AMT_LOWER"), row.get("PREDICT_AMT_UPPER")),
                 "growth": arrow_pct_text(growth),
                 "growth_class": growth_class(row.get("ADD_AMP_LOWER"), row.get("ADD_AMP_UPPER"), row.get("INCREASE_JZ")),
+                "q1_deduct_profit": amount_to_yi(q1_row.get("DEDUCT_PARENT_NETPROFIT")),
+                "q1_deduct_yoy": pct_text(q1_row.get("DPN_RATIO")),
+                "q1_deduct_class": growth_class(q1_row.get("DPN_RATIO")),
                 "content": str(row.get("PREDICT_CONTENT", "") or "").strip(),
             }
         )
@@ -822,7 +846,8 @@ def write_html_report(
             '<tr class="forecast-row" id="forecast-{}" data-code="{}" data-date="{}">'
             '<td><span class="code">{}</span><strong>{}</strong></td>'
             '<td><span class="forecast-type">{}</span></td>'
-            '<td><span class="table-metric {}">{}</span><small>{}</small></td>'
+            '<td><span class="table-metric {}">{}</span><small>{}</small><small>{}</small></td>'
+            '<td><span class="table-metric">{}</span><small class="{}">{}</small></td>'
             '<td>{}</td>'
             '<td class="forecast-content">{}</td>'
             '</tr>'.format(
@@ -835,6 +860,10 @@ def write_html_report(
                 html.escape(item["growth_class"]),
                 html.escape(item["growth"]),
                 html.escape(item["amount"]),
+                html.escape(item["forecast_basis"]),
+                html.escape(item["q1_deduct_profit"]),
+                html.escape(item["q1_deduct_class"]),
+                html.escape(item["q1_deduct_yoy"]),
                 html.escape(item["finance"] or "归母/净利润"),
                 html.escape(item["content"]),
             )
@@ -855,7 +884,7 @@ def write_html_report(
             '<summary>展开业绩预告列表</summary>'
             '<div class="company-table-wrap">'
             '<table class="company-table forecast-table">'
-            '<thead><tr><th>股票</th><th>预告类型</th><th>同比变化</th><th>指标</th><th>公告摘要</th></tr></thead>'
+            '<thead><tr><th>股票</th><th>预告类型</th><th>中报预告利润</th><th>一季度扣非归母净利润</th><th>预告指标</th><th>公告摘要</th></tr></thead>'
             f"<tbody>{forecast_items}</tbody>"
             "</table>"
             "</div>"
