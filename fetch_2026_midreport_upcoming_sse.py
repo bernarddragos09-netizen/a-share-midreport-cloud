@@ -305,6 +305,18 @@ def amount_range_to_yi(lower: Any, upper: Any) -> str:
     return amount_to_yi(value)
 
 
+def blank_amount_to_yi(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    return amount_to_yi(value)
+
+
+def blank_amount_range_to_yi(lower: Any, upper: Any) -> str:
+    if lower in (None, "") and upper in (None, ""):
+        return ""
+    return amount_range_to_yi(lower, upper)
+
+
 def pct_text(value: Any) -> str:
     if value in (None, ""):
         return "待披露"
@@ -321,6 +333,18 @@ def pct_range_text(lower: Any, upper: Any, middle: Any = None) -> str:
         return pct_text(middle)
     value = lower if lower not in (None, "") else upper
     return pct_text(value)
+
+
+def blank_pct_text(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    return pct_text(value)
+
+
+def blank_arrow_pct_text(value: float | None) -> str:
+    if value is None:
+        return ""
+    return arrow_pct_text(value)
 
 
 def growth_class(*values: Any) -> str:
@@ -437,7 +461,14 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
         trigger_rows = [row for row in code_rows if is_key_performance_forecast(row)]
         if not trigger_rows:
             continue
-        row = min(
+        by_finance_code = {
+            str(row.get("PREDICT_FINANCE_CODE", "") or "").strip(): row
+            for row in code_rows
+            if str(row.get("PREDICT_FINANCE_CODE", "") or "").strip()
+        }
+        parent_row = by_finance_code.get("004") or by_finance_code.get("002") or {}
+        deduct_row = by_finance_code.get("005") or {}
+        display_row = deduct_row or parent_row or min(
             code_rows,
             key=lambda item: priority.get(str(item.get("PREDICT_FINANCE_CODE", "") or "").strip(), 99),
         )
@@ -445,32 +476,36 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
             trigger_rows,
             key=lambda item: priority.get(str(item.get("PREDICT_FINANCE_CODE", "") or "").strip(), 99),
         )
-        code = str(row.get("SECURITY_CODE", "") or "").strip()
-        finance_code = str(row.get("PREDICT_FINANCE_CODE", "") or "").strip()
+        code = str(display_row.get("SECURITY_CODE", "") or "").strip()
         q1_row = q1_lookup.get(code, {})
-        growth = forecast_growth_value(row)
         trigger_finance = str(trigger_row.get("PREDICT_FINANCE", "") or "").strip()
         trigger_growth = forecast_growth_value(trigger_row)
+        parent_growth = forecast_growth_value(parent_row)
+        deduct_growth = forecast_growth_value(deduct_row)
         forecasts.append(
             {
                 "stock_code": code,
-                "stock_name": str(row.get("SECURITY_NAME_ABBR", "") or "").strip(),
-                "notice_date": forecast_notice_date(row),
-                "predict_type": str(row.get("PREDICT_TYPE", "") or "").strip() or "业绩预告",
-                "forecast_basis": "扣非归母净利润" if finance_code == "005" else "归母净利润口径",
-                "finance": str(row.get("PREDICT_FINANCE", "") or "").strip(),
-                "amount": amount_range_to_yi(row.get("PREDICT_AMT_LOWER"), row.get("PREDICT_AMT_UPPER")),
-                "growth": arrow_pct_text(growth),
-                "growth_class": growth_class(row.get("ADD_AMP_LOWER"), row.get("ADD_AMP_UPPER"), row.get("INCREASE_JZ")),
-                "q1_deduct_profit": amount_to_yi(q1_row.get("DEDUCT_PARENT_NETPROFIT")),
-                "q1_deduct_yoy": pct_text(q1_row.get("DPN_RATIO")),
+                "stock_name": str(display_row.get("SECURITY_NAME_ABBR", "") or "").strip(),
+                "notice_date": forecast_notice_date(display_row),
+                "predict_type": str(trigger_row.get("PREDICT_TYPE", "") or "").strip() or "业绩预告",
+                "forecast_parent_profit": blank_amount_range_to_yi(parent_row.get("PREDICT_AMT_LOWER"), parent_row.get("PREDICT_AMT_UPPER")),
+                "forecast_parent_growth": blank_arrow_pct_text(parent_growth),
+                "forecast_parent_class": growth_class(parent_row.get("ADD_AMP_LOWER"), parent_row.get("ADD_AMP_UPPER"), parent_row.get("INCREASE_JZ")),
+                "forecast_deduct_profit": blank_amount_range_to_yi(deduct_row.get("PREDICT_AMT_LOWER"), deduct_row.get("PREDICT_AMT_UPPER")),
+                "forecast_deduct_growth": blank_arrow_pct_text(deduct_growth),
+                "forecast_deduct_class": growth_class(deduct_row.get("ADD_AMP_LOWER"), deduct_row.get("ADD_AMP_UPPER"), deduct_row.get("INCREASE_JZ")),
+                "q1_parent_profit": blank_amount_to_yi(q1_row.get("PARENT_NETPROFIT")),
+                "q1_parent_yoy": blank_pct_text(q1_row.get("PARENT_NETPROFIT_RATIO")),
+                "q1_parent_class": growth_class(q1_row.get("PARENT_NETPROFIT_RATIO")),
+                "q1_deduct_profit": blank_amount_to_yi(q1_row.get("DEDUCT_PARENT_NETPROFIT")),
+                "q1_deduct_yoy": blank_pct_text(q1_row.get("DPN_RATIO")),
                 "q1_deduct_class": growth_class(q1_row.get("DPN_RATIO")),
                 "trigger_reason": (
                     f"触发口径：{trigger_finance or '业绩预告'} {arrow_pct_text(trigger_growth)}"
-                    if trigger_row is not row
+                    if trigger_growth is not None
                     else ""
                 ),
-                "content": str(row.get("PREDICT_CONTENT", "") or "").strip(),
+                "content": str((deduct_row or parent_row or trigger_row).get("PREDICT_CONTENT", "") or "").strip(),
             }
         )
     forecasts.sort(key=lambda item: (item["notice_date"], item["stock_code"]))
@@ -856,32 +891,38 @@ def write_html_report(
             for company in companies
         )
         forecast_items = "\n".join(
-            '<tr class="forecast-row" id="forecast-{}" data-code="{}" data-date="{}">'
+            '<tr class="forecast-row" id="forecast-{}" data-code="{}" data-date="{}" data-forecast-index="{}">'
             '<td><span class="code">{}</span><strong>{}</strong></td>'
             '<td><span class="forecast-type">{}</span></td>'
-            '<td><span class="table-metric {}">{}</span><small>{}</small><small>{}</small></td>'
             '<td><span class="table-metric">{}</span><small class="{}">{}</small></td>'
-            '<td>{}</td>'
+            '<td><span class="table-metric">{}</span><small class="{}">{}</small></td>'
+            '<td><span class="table-metric">{}</span><small class="{}">{}</small></td>'
+            '<td><span class="table-metric">{}</span><small class="{}">{}</small></td>'
             '<td class="forecast-content">{}{}</td>'
             '</tr>'.format(
                 html.escape(item["stock_code"]),
                 html.escape(item["stock_code"]),
                 html.escape(date),
+                index,
                 html.escape(item["stock_code"]),
                 html.escape(item["stock_name"]),
                 html.escape(item["predict_type"]),
-                html.escape(item["growth_class"]),
-                html.escape(item["growth"]),
-                html.escape(item["amount"]),
-                html.escape(item["forecast_basis"]),
+                html.escape(item["forecast_parent_profit"]),
+                html.escape(item["forecast_parent_class"]),
+                html.escape(item["forecast_parent_growth"]),
+                html.escape(item["forecast_deduct_profit"]),
+                html.escape(item["forecast_deduct_class"]),
+                html.escape(item["forecast_deduct_growth"]),
+                html.escape(item["q1_parent_profit"]),
+                html.escape(item["q1_parent_class"]),
+                html.escape(item["q1_parent_yoy"]),
                 html.escape(item["q1_deduct_profit"]),
                 html.escape(item["q1_deduct_class"]),
                 html.escape(item["q1_deduct_yoy"]),
-                html.escape(item["finance"] or "归母/净利润"),
                 f'<div class="trigger-reason">{html.escape(item["trigger_reason"])}</div>' if item.get("trigger_reason") else "",
                 html.escape(item["content"]),
             )
-            for item in forecast_groups.get(date, [])
+            for index, item in enumerate(forecast_groups.get(date, []))
         )
         schedule_block = (
             '<div class="company-table-wrap">'
@@ -898,10 +939,11 @@ def write_html_report(
             '<summary>展开业绩预告列表</summary>'
             '<div class="company-table-wrap">'
             '<table class="company-table forecast-table">'
-            '<thead><tr><th>股票</th><th>预告类型</th><th>中报预告利润</th><th>一季度扣非归母净利润</th><th>预告指标</th><th>公告摘要</th></tr></thead>'
+            '<thead><tr><th>股票</th><th>预告类型</th><th>预告归母净利润</th><th>预告扣非归母净利润</th><th>一季报归母净利润</th><th>一季报扣非归母净利润</th><th>公告摘要</th></tr></thead>'
             f"<tbody>{forecast_items}</tbody>"
             "</table>"
             "</div>"
+            f'<div class="forecast-pager" data-date="{html.escape(date)}" data-total="{len(forecast_groups.get(date, []))}"></div>'
             "</details>"
             if forecast_items
             else ""
@@ -994,6 +1036,11 @@ def write_html_report(
     .forecast-type {{ display: inline-flex; border-radius: 999px; padding: 3px 8px; background: #fff7ed; color: #c2410c; font-weight: 800; white-space: nowrap; }}
     .forecast-content {{ min-width: 280px; color: #334155; font-size: 13px; line-height: 1.55; }}
     .trigger-reason {{ margin-bottom: 4px; color: #92400e; font-weight: 800; }}
+    .forecast-pager {{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 2px; color: #475569; font-size: 13px; }}
+    .pager-button {{ border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #24292f; padding: 5px 9px; cursor: pointer; }}
+    .pager-button:hover {{ background: #f6f8fa; }}
+    .pager-button.is-active {{ border-color: #0969da; background: #0969da; color: #fff; }}
+    .pager-button:disabled {{ opacity: .55; cursor: default; }}
     .empty-note {{ margin-top: 10px; color: #64748b; font-size: 13px; }}
     .detail-button {{ border: 1px solid #0969da; border-radius: 6px; background: #0969da; color: #fff; padding: 6px 10px; cursor: pointer; font-size: 13px; white-space: nowrap; }}
     .detail-button:hover {{ background: #0550ae; }}
@@ -1159,6 +1206,34 @@ def write_html_report(
     }}
     document.querySelectorAll('.calendar-day.has-count').forEach(button => {{
       button.addEventListener('click', () => jumpToDate(button.dataset.date));
+    }});
+    const forecastPageSize = 10;
+    function renderForecastPage(date, page) {{
+      const pager = document.querySelector(`.forecast-pager[data-date="${{date}}"]`);
+      if (!pager) return;
+      const total = Number(pager.dataset.total || 0);
+      const pageCount = Math.max(1, Math.ceil(total / forecastPageSize));
+      const currentPage = Math.min(Math.max(1, page), pageCount);
+      document.querySelectorAll(`.forecast-row[data-date="${{date}}"]`).forEach(row => {{
+        const index = Number(row.dataset.forecastIndex || 0);
+        row.hidden = index < (currentPage - 1) * forecastPageSize || index >= currentPage * forecastPageSize;
+      }});
+      const buttons = Array.from({{ length: pageCount }}, (_, index) => {{
+        const pageNo = index + 1;
+        return `<button class="pager-button${{pageNo === currentPage ? ' is-active' : ''}}" type="button" data-date="${{date}}" data-page="${{pageNo}}">${{pageNo}}</button>`;
+      }}).join('');
+      const start = total ? (currentPage - 1) * forecastPageSize + 1 : 0;
+      const end = Math.min(currentPage * forecastPageSize, total);
+      pager.innerHTML = `<span>业绩预告二级列表：${{start}}-${{end}} / ${{total}} 家</span>${{buttons}}`;
+    }}
+    document.querySelectorAll('.forecast-pager').forEach(pager => {{
+      renderForecastPage(pager.dataset.date, 1);
+    }});
+    document.addEventListener('click', event => {{
+      const target = event.target;
+      if (target && target.classList && target.classList.contains('pager-button')) {{
+        renderForecastPage(target.dataset.date, Number(target.dataset.page || 1));
+      }}
     }});
     function runStockSearch() {{
       const q = normalizeQuery(stockSearchInput.value);
