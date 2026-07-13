@@ -208,35 +208,9 @@ def svg_line_chart(title: str, series: list[tuple[str, list[tuple[str, float | N
     )
 
 
-def balance_snapshot_chart(company_name: str, report_date: str, balance: dict[str, Any]) -> str:
-    def value_yi(*fields: str) -> float | None:
-        total = add_nums(*(balance.get(field) for field in fields))
-        return total / 100000000 if total is not None else None
-
-    assets = [
-        ("现金", value_yi("MONETARYFUNDS")),
-        ("应收账款", value_yi("ACCOUNTS_RECE")),
-        ("预付款", value_yi("PREPAYMENT")),
-        ("存货", value_yi("INVENTORY")),
-        ("其他流动", value_yi("OTHER_CURRENT_ASSET")),
-        ("长期投资", value_yi("LONG_EQUITY_INVEST")),
-        ("固定资产", value_yi("FIXED_ASSET")),
-        ("在建工程", value_yi("CIP")),
-        ("无形资产", value_yi("INTANGIBLE_ASSET")),
-        ("其他非流动", value_yi("OTHER_NONCURRENT_ASSET", "OTHER_NONCURRENT_FINASSET", "DEFER_TAX_ASSET")),
-    ]
-    liabilities = [
-        ("短期借款", value_yi("SHORT_LOAN", "SHORT_BOND_PAYABLE", "NONCURRENT_LIAB_1YEAR")),
-        ("应付款", value_yi("ACCOUNTS_PAYABLE")),
-        ("预收款", value_yi("CONTRACT_LIAB", "PREDICT_LIAB")),
-        ("薪酬&税", value_yi("STAFF_SALARY_PAYABLE", "TAX_PAYABLE")),
-        ("其他流动", value_yi("OTHER_CURRENT_LIAB", "TOTAL_OTHER_PAYABLE")),
-        ("长期借款", value_yi("LONG_LOAN", "BOND_PAYABLE", "LEASE_LIAB")),
-        ("其他非流动", value_yi("OTHER_NONCURRENT_LIAB", "DEFER_TAX_LIAB")),
-    ]
-    bars = [(label, value, "#2f86d5", "asset") for label, value in assets if value is not None]
-    bars += [(label, value, "#ff5b22", "liability") for label, value in liabilities if value is not None]
-    if not bars:
+def balance_snapshot_chart(company_name: str, balance_rows: list[dict[str, Any]]) -> str:
+    rows = list(reversed([row for row in balance_rows if row]))
+    if not rows:
         return '<section class="fs-balance-snapshot empty">资产负债结构图：暂无数据</section>'
 
     width = 1120
@@ -245,14 +219,8 @@ def balance_snapshot_chart(company_name: str, report_date: str, balance: dict[st
     right = 36
     top = 98
     bottom = 94
-    max_v = max(value for _, value, _, _ in bars)
-    max_v = max_v * 1.18 if max_v > 0 else 1
     chart_w = width - left - right
     chart_h = height - top - bottom
-    count = len(bars)
-    gap = 12
-    slot = chart_w / max(count, 1)
-    bar_w = max(18, min(44, slot - gap))
 
     def axis_text(value: float) -> str:
         if value >= 1000:
@@ -268,72 +236,112 @@ def balance_snapshot_chart(company_name: str, report_date: str, balance: dict[st
             return [label]
         return [label[:4], label[4:]]
 
-    ticks = []
-    for i in range(5):
-        value = max_v * i / 4
-        y = top + chart_h - (value / max_v) * chart_h
-        ticks.append(
-            f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="#eaeef2"/>'
-            f'<text x="{left-12}" y="{y+4:.1f}" text-anchor="end">{escape(axis_text(value))}</text>'
+    def row_bars(balance: dict[str, Any]) -> list[tuple[str, float, str, str]]:
+        def value_yi(*fields: str) -> float | None:
+            total = add_nums(*(balance.get(field) for field in fields))
+            return total / 100000000 if total is not None else None
+
+        assets = [
+            ("现金", value_yi("MONETARYFUNDS")),
+            ("应收账款", value_yi("ACCOUNTS_RECE")),
+            ("预付款", value_yi("PREPAYMENT")),
+            ("存货", value_yi("INVENTORY")),
+            ("其他流动", value_yi("OTHER_CURRENT_ASSET")),
+            ("长期投资", value_yi("LONG_EQUITY_INVEST")),
+            ("固定资产", value_yi("FIXED_ASSET")),
+            ("在建工程", value_yi("CIP")),
+            ("无形资产", value_yi("INTANGIBLE_ASSET")),
+            ("其他非流动", value_yi("OTHER_NONCURRENT_ASSET", "OTHER_NONCURRENT_FINASSET", "DEFER_TAX_ASSET")),
+        ]
+        liabilities = [
+            ("短期借款", value_yi("SHORT_LOAN", "SHORT_BOND_PAYABLE", "NONCURRENT_LIAB_1YEAR")),
+            ("应付款", value_yi("ACCOUNTS_PAYABLE")),
+            ("预收款", value_yi("CONTRACT_LIAB", "PREDICT_LIAB")),
+            ("薪酬&税", value_yi("STAFF_SALARY_PAYABLE", "TAX_PAYABLE")),
+            ("其他流动", value_yi("OTHER_CURRENT_LIAB", "TOTAL_OTHER_PAYABLE")),
+            ("长期借款", value_yi("LONG_LOAN", "BOND_PAYABLE", "LEASE_LIAB")),
+            ("其他非流动", value_yi("OTHER_NONCURRENT_LIAB", "DEFER_TAX_LIAB")),
+        ]
+        bars = [(label, value, "#2f86d5", "asset") for label, value in assets if value is not None]
+        bars += [(label, value, "#ff5b22", "liability") for label, value in liabilities if value is not None]
+        return bars
+
+    def render_panel(balance: dict[str, Any], panel_index: int) -> str:
+        bars = row_bars(balance)
+        if not bars:
+            return f'<div class="fs-snapshot-panel fs-snapshot-panel-{panel_index} empty">本期资产负债结构暂无数据</div>'
+        max_v = max(value for _, value, _, _ in bars)
+        max_v = max_v * 1.18 if max_v > 0 else 1
+        count = len(bars)
+        gap = 12
+        slot = chart_w / max(count, 1)
+        bar_w = max(18, min(44, slot - gap))
+
+        ticks = []
+        for i in range(5):
+            value = max_v * i / 4
+            y = top + chart_h - (value / max_v) * chart_h
+            ticks.append(
+                f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="#eaeef2"/>'
+                f'<text x="{left-12}" y="{y+4:.1f}" text-anchor="end">{escape(axis_text(value))}</text>'
+            )
+
+        bar_nodes = []
+        label_nodes = []
+        asset_count = sum(1 for _, _, _, group in bars if group == "asset")
+        for index, (label, value, color, group) in enumerate(bars):
+            x = left + index * slot + (slot - bar_w) / 2
+            bar_h = (value / max_v) * chart_h
+            y = top + chart_h - bar_h
+            bar_nodes.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bar_h:.1f}" rx="4" fill="{color}">'
+                f'<title>{escape(label)} {value:,.2f}亿元</title></rect>'
+                f'<text x="{x + bar_w / 2:.1f}" y="{max(18, y - 8):.1f}" text-anchor="middle" class="fs-bar-value">{escape(axis_text(value))}</text>'
+            )
+            tspans = "".join(
+                f'<tspan x="{x + bar_w / 2:.1f}" dy="{12 if part_index else 0}">{escape(part)}</tspan>'
+                for part_index, part in enumerate(split_label(label))
+            )
+            label_nodes.append(f'<text x="{x + bar_w / 2:.1f}" y="{height - 64}" text-anchor="middle" class="fs-bar-label">{tspans}</text>')
+
+        separator = ""
+        if 0 < asset_count < count:
+            sx = left + asset_count * slot - gap / 2
+            separator = (
+                f'<line x1="{sx:.1f}" y1="{top - 8}" x2="{sx:.1f}" y2="{height - bottom + 40}" stroke="#d8dee4" stroke-dasharray="5 5"/>'
+                f'<text x="{left + asset_count * slot / 2:.1f}" y="{height - 18}" text-anchor="middle" class="fs-group-label">资产端</text>'
+                f'<text x="{sx + (count - asset_count) * slot / 2:.1f}" y="{height - 18}" text-anchor="middle" class="fs-group-label">负债端</text>'
+            )
+
+        return (
+            f'<div class="fs-snapshot-panel fs-snapshot-panel-{panel_index}">'
+            '<div class="fs-snapshot-head">'
+            '<div>'
+            f'<div class="fs-snapshot-title">{escape(str(company_name))}资产负债结构图</div>'
+            f'<div class="fs-snapshot-date">{escape(date_label(balance))}</div>'
+            '</div>'
+            '</div>'
+            f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{escape(str(company_name))}资产负债结构图">'
+            f'{"".join(ticks)}'
+            f'<line x1="{left}" y1="{top + chart_h}" x2="{width-right}" y2="{top + chart_h}" stroke="#d0d7de"/>'
+            f'{"".join(bar_nodes)}{"".join(label_nodes)}{separator}'
+            '<text x="24" y="42" class="fs-unit">单位：亿元</text>'
+            '</svg>'
+            '</div>'
         )
 
-    bar_nodes = []
-    label_nodes = []
-    asset_count = sum(1 for _, _, _, group in bars if group == "asset")
-    for index, (label, value, color, group) in enumerate(bars):
-        x = left + index * slot + (slot - bar_w) / 2
-        bar_h = (value / max_v) * chart_h
-        y = top + chart_h - bar_h
-        bar_nodes.append(
-            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bar_h:.1f}" rx="4" fill="{color}">'
-            f'<title>{escape(label)} {value:,.2f}亿元</title></rect>'
-            f'<text x="{x + bar_w / 2:.1f}" y="{max(18, y - 8):.1f}" text-anchor="middle" class="fs-bar-value">{escape(axis_text(value))}</text>'
-        )
-        label_parts = split_label(label)
-        tspans = "".join(
-            f'<tspan x="{x + bar_w / 2:.1f}" dy="{12 if part_index else 0}">{escape(part)}</tspan>'
-            for part_index, part in enumerate(label_parts)
-        )
-        label_nodes.append(f'<text x="{x + bar_w / 2:.1f}" y="{height - 64}" text-anchor="middle" class="fs-bar-label">{tspans}</text>')
-
-    separator = ""
-    if 0 < asset_count < count:
-        sx = left + asset_count * slot - gap / 2
-        separator = (
-            f'<line x1="{sx:.1f}" y1="{top - 8}" x2="{sx:.1f}" y2="{height - bottom + 40}" stroke="#d8dee4" stroke-dasharray="5 5"/>'
-            f'<text x="{left + asset_count * slot / 2:.1f}" y="{height - 18}" text-anchor="middle" class="fs-group-label">资产端</text>'
-            f'<text x="{sx + (count - asset_count) * slot / 2:.1f}" y="{height - 18}" text-anchor="middle" class="fs-group-label">负债端</text>'
-        )
-
-    arrow_nodes = ""
-    asset_max_index = max((i for i, item in enumerate(bars) if item[3] == "asset"), key=lambda i: bars[i][1], default=None)
-    liability_max_index = max((i for i, item in enumerate(bars) if item[3] == "liability"), key=lambda i: bars[i][1], default=None)
-    for marker_index in (asset_max_index, liability_max_index):
-        if marker_index is None:
-            continue
-        _, value, _, _ = bars[marker_index]
-        x = left + marker_index * slot + slot / 2
-        y = top + chart_h - (value / max_v) * chart_h
-        start_x = max(left + 20, x - 95)
-        start_y = max(top + 28, y + 50)
-        arrow_nodes += f'<line x1="{start_x:.1f}" y1="{start_y:.1f}" x2="{x-8:.1f}" y2="{y+14:.1f}" stroke="#f05a3a" stroke-width="5" marker-end="url(#fsArrow)"/>'
-
+    panels = [
+        render_panel(row, index).replace('class="fs-snapshot-panel ', 'class="fs-snapshot-panel is-active ' if index == 0 else 'class="fs-snapshot-panel ')
+        for index, row in enumerate(rows[:6])
+    ]
     return (
-        '<section class="fs-balance-snapshot">'
-        '<div class="fs-snapshot-head">'
-        '<div>'
-        f'<div class="fs-snapshot-title">{escape(str(company_name))}资产负债结构图</div>'
-        f'<div class="fs-snapshot-date">{escape(report_date)}</div>'
+        '<section class="fs-balance-snapshot" data-current-index="0">'
+        '<div class="fs-snapshot-nav">'
+        '<button class="fs-snapshot-jump is-active" type="button" data-index="0">当期数据</button>'
+        '<button class="fs-snapshot-step" type="button" data-dir="1">上一期</button>'
+        '<button class="fs-snapshot-step is-disabled" type="button" data-dir="-1" disabled>下一期</button>'
         '</div>'
-        '<div class="fs-snapshot-nav"><span>当期数据</span><span>上一期</span><span>下一期</span></div>'
-        '</div>'
-        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{escape(str(company_name))}资产负债结构图">'
-        '<defs><marker id="fsArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#f05a3a"/></marker></defs>'
-        f'{"".join(ticks)}'
-        f'<line x1="{left}" y1="{top + chart_h}" x2="{width-right}" y2="{top + chart_h}" stroke="#d0d7de"/>'
-        f'{"".join(bar_nodes)}{"".join(label_nodes)}{separator}{arrow_nodes}'
-        '<text x="24" y="42" class="fs-unit">单位：亿元</text>'
-        '</svg>'
+        f'{"".join(panels)}'
         '</section>'
     )
 
@@ -419,7 +427,7 @@ def fetch_financial_statements_html(code: str) -> str:
     short_debt = add_nums(balance.get("SHORT_LOAN"), balance.get("SHORT_BOND_PAYABLE"), balance.get("NONCURRENT_LIAB_1YEAR"))
     net_debt = sub_num(interest_debt, balance.get("MONETARYFUNDS")) if interest_debt is not None else None
     fcf = sub_num(cash.get("NETCASH_OPERATE"), cash.get("CONSTRUCT_LONG_ASSET"))
-    balance_snapshot = balance_snapshot_chart(str(name), date_label(balance), balance) if balance else ""
+    balance_snapshot = balance_snapshot_chart(str(name), balance_rows) if balance_rows else ""
 
     income_table = mini_table(
         "利润表",
@@ -508,7 +516,7 @@ def fetch_financial_statements_html(code: str) -> str:
 
     return (
         '<style>'
-        '.fs-page{font-family:"Microsoft YaHei",Arial,sans-serif;color:#24292f}.fs-page h2{margin:0 0 8px;font-size:26px}.fs-sub{color:#57606a;margin-bottom:16px}.fs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.fs-panel{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:16px;overflow:auto}.fs-panel h3{margin:0 0 12px;font-size:18px}.fs-mini{width:100%;border-collapse:collapse}.fs-mini th,.fs-mini td{border-bottom:1px solid #d8dee4;padding:8px;text-align:left}.fs-mini th{color:#57606a;font-weight:600;width:46%}.fs-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}.fs-card{border:1px solid #d8dee4;border-radius:8px;background:#f6f8fa;padding:12px}.fs-label{color:#57606a;font-size:13px}.fs-value{margin-top:6px;font-weight:800;font-size:18px}.fs-balance-snapshot{border:1px solid #d0d7de;border-radius:8px;background:#fff;margin:14px 0;padding:18px;box-shadow:0 1px 2px rgba(27,31,36,.06);overflow:hidden}.fs-snapshot-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:6px}.fs-snapshot-title{text-align:center;font-weight:900;font-size:20px;color:#24292f}.fs-snapshot-date{text-align:center;margin-top:4px;color:#57606a;font-size:13px}.fs-snapshot-nav{display:flex;gap:14px;color:#4f8ab8;font-weight:700;font-size:13px;white-space:nowrap}.fs-balance-snapshot svg{display:block;width:100%;height:auto;overflow:visible}.fs-balance-snapshot text{fill:#57606a;font-size:13px}.fs-balance-snapshot .fs-bar-value{fill:#24292f;font-weight:800;font-size:14px}.fs-balance-snapshot .fs-bar-label{fill:#57606a;font-size:12px}.fs-balance-snapshot .fs-group-label{fill:#6b7280;font-size:13px;font-weight:800}.fs-balance-snapshot .fs-unit{fill:#6b7280;font-size:12px}.fs-chart-switcher{margin-top:14px}.fs-chart-stage{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:18px;overflow:hidden}.fs-chart{border:0;background:#fff;padding:0;overflow:hidden}.fs-chart-title{font-weight:900;font-size:22px;margin-bottom:10px}.fs-chart svg{display:block;width:100%;height:auto;max-width:100%;overflow:visible}.fs-chart text{font-size:13px;fill:#57606a}.fs-legend{display:flex;flex-wrap:wrap;gap:8px 14px;color:#57606a;font-size:14px;line-height:1.35;margin-top:6px}.fs-legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.fs-legend i{display:inline-block;width:10px;height:10px;border-radius:999px;flex:0 0 auto}.fs-chart-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.fs-chart-tabs label{border:1px solid #d0d7de;border-radius:999px;background:#fff;color:#24292f;padding:7px 12px;font-size:13px;font-weight:700;cursor:pointer}.fs-chart-tabs label:hover{background:#f6f8fa}.fs-note{margin:12px 0;color:#57606a;font-size:13px;line-height:1.6}.empty{color:#57606a}@media(max-width:720px){.fs-grid{grid-template-columns:1fr}.fs-balance-snapshot{padding:12px}.fs-snapshot-head{display:block}.fs-snapshot-nav{margin-top:10px;justify-content:center}.fs-balance-snapshot .fs-bar-value{font-size:13px}.fs-chart-stage{padding:12px}.fs-chart-title{font-size:18px}.fs-chart text{font-size:14px}.fs-legend{font-size:12px}.fs-chart-tabs label{font-size:12px;padding:6px 10px}}'
+        '.fs-page{font-family:"Microsoft YaHei",Arial,sans-serif;color:#24292f}.fs-page h2{margin:0 0 8px;font-size:26px}.fs-sub{color:#57606a;margin-bottom:16px}.fs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.fs-panel{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:16px;overflow:auto}.fs-panel h3{margin:0 0 12px;font-size:18px}.fs-mini{width:100%;border-collapse:collapse}.fs-mini th,.fs-mini td{border-bottom:1px solid #d8dee4;padding:8px;text-align:left}.fs-mini th{color:#57606a;font-weight:600;width:46%}.fs-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}.fs-card{border:1px solid #d8dee4;border-radius:8px;background:#f6f8fa;padding:12px}.fs-label{color:#57606a;font-size:13px}.fs-value{margin-top:6px;font-weight:800;font-size:18px}.fs-balance-snapshot{position:relative;border:1px solid #d0d7de;border-radius:8px;background:#fff;margin:14px 0;padding:18px;box-shadow:0 1px 2px rgba(27,31,36,.06);overflow:hidden}.fs-snapshot-panel{display:none}.fs-snapshot-panel.is-active{display:block}.fs-snapshot-head{display:flex;align-items:flex-start;justify-content:center;gap:14px;margin-bottom:6px;padding-right:230px}.fs-snapshot-title{text-align:center;font-weight:900;font-size:20px;color:#24292f}.fs-snapshot-date{text-align:center;margin-top:4px;color:#57606a;font-size:13px}.fs-snapshot-nav{position:absolute;right:18px;top:18px;display:flex;gap:14px;color:#4f8ab8;font-weight:700;font-size:13px;white-space:nowrap;z-index:2}.fs-snapshot-nav button{appearance:none;border:0;background:transparent;padding:0;color:#4f8ab8;font:inherit;font-weight:700;cursor:pointer}.fs-snapshot-nav button:hover{color:#0969da}.fs-snapshot-nav button.is-active{color:#0969da;text-decoration:underline}.fs-snapshot-nav button:disabled,.fs-snapshot-nav button.is-disabled{color:#8c959f;cursor:not-allowed;text-decoration:none}.fs-balance-snapshot svg{display:block;width:100%;height:auto;overflow:visible}.fs-balance-snapshot text{fill:#57606a;font-size:13px}.fs-balance-snapshot .fs-bar-value{fill:#24292f;font-weight:800;font-size:14px}.fs-balance-snapshot .fs-bar-label{fill:#57606a;font-size:12px}.fs-balance-snapshot .fs-group-label{fill:#6b7280;font-size:13px;font-weight:800}.fs-balance-snapshot .fs-unit{fill:#6b7280;font-size:12px}.fs-chart-switcher{margin-top:14px}.fs-chart-stage{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:18px;overflow:hidden}.fs-chart{border:0;background:#fff;padding:0;overflow:hidden}.fs-chart-title{font-weight:900;font-size:22px;margin-bottom:10px}.fs-chart svg{display:block;width:100%;height:auto;max-width:100%;overflow:visible}.fs-chart text{font-size:13px;fill:#57606a}.fs-legend{display:flex;flex-wrap:wrap;gap:8px 14px;color:#57606a;font-size:14px;line-height:1.35;margin-top:6px}.fs-legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.fs-legend i{display:inline-block;width:10px;height:10px;border-radius:999px;flex:0 0 auto}.fs-chart-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.fs-chart-tabs label{border:1px solid #d0d7de;border-radius:999px;background:#fff;color:#24292f;padding:7px 12px;font-size:13px;font-weight:700;cursor:pointer}.fs-chart-tabs label:hover{background:#f6f8fa}.fs-note{margin:12px 0;color:#57606a;font-size:13px;line-height:1.6}.empty{color:#57606a}@media(max-width:720px){.fs-grid{grid-template-columns:1fr}.fs-balance-snapshot{padding:12px}.fs-snapshot-head{display:block;padding-right:0;padding-top:34px}.fs-snapshot-nav{left:12px;right:12px;top:12px;justify-content:center}.fs-balance-snapshot .fs-bar-value{font-size:13px}.fs-chart-stage{padding:12px}.fs-chart-title{font-size:18px}.fs-chart text{font-size:14px}.fs-legend{font-size:12px}.fs-chart-tabs label{font-size:12px;padding:6px 10px}}'
         '</style>'
         '<div class="fs-page">'
         f'<h2>{escape(str(name))} 三大财务报表</h2>'

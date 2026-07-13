@@ -1468,6 +1468,30 @@ def write_html_report(
         button.disabled = false;
       }}
     }}
+    function setSnapshotPeriod(snapshot, nextIndex) {{
+      const panels = Array.from(snapshot.querySelectorAll('.fs-snapshot-panel'));
+      if (!panels.length) return;
+      const maxIndex = panels.length - 1;
+      const safeIndex = Math.max(0, Math.min(maxIndex, nextIndex));
+      snapshot.dataset.currentIndex = String(safeIndex);
+      panels.forEach((panel, index) => {{
+        panel.classList.toggle('is-active', index === safeIndex);
+      }});
+      const currentButton = snapshot.querySelector('.fs-snapshot-jump[data-index="0"]');
+      const prevButton = snapshot.querySelector('.fs-snapshot-step[data-dir="1"]');
+      const nextButton = snapshot.querySelector('.fs-snapshot-step[data-dir="-1"]');
+      if (currentButton) currentButton.classList.toggle('is-active', safeIndex === 0);
+      if (prevButton) {{
+        const disabled = safeIndex >= maxIndex;
+        prevButton.disabled = disabled;
+        prevButton.classList.toggle('is-disabled', disabled);
+      }}
+      if (nextButton) {{
+        const disabled = safeIndex <= 0;
+        nextButton.disabled = disabled;
+        nextButton.classList.toggle('is-disabled', disabled);
+      }}
+    }}
     document.addEventListener('click', event => {{
       const target = event.target;
       if (target && target.classList && target.classList.contains('broker-button')) {{
@@ -1476,6 +1500,18 @@ def write_html_report(
       }}
       if (target && target.classList && target.classList.contains('financial-button')) {{
         loadFinancialStatements(target);
+      }}
+      if (target && target.classList && target.classList.contains('fs-snapshot-jump')) {{
+        const snapshot = target.closest('.fs-balance-snapshot');
+        if (snapshot) setSnapshotPeriod(snapshot, Number(target.dataset.index || 0));
+      }}
+      if (target && target.classList && target.classList.contains('fs-snapshot-step')) {{
+        const snapshot = target.closest('.fs-balance-snapshot');
+        if (snapshot) {{
+          const currentIndex = Number(snapshot.dataset.currentIndex || 0);
+          const dir = Number(target.dataset.dir || 0);
+          setSnapshotPeriod(snapshot, currentIndex + dir);
+        }}
       }}
     }});
 
