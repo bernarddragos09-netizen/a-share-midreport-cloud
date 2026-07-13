@@ -3,5 +3,5 @@ services:
     name: a-share-midreport-cloud
     runtime: python
     plan: free
-    buildCommand: pip install -r a_share_midreport_cloud/backend/requirements.txt && python build_cloud_frontend.py
+    buildCommand: pip install -r a_share_midreport_cloud/backend/requirements.txt
     startCommand: uvicorn a_share_midreport_cloud.backend.app:app --host 0.0.0.0 --port $PORT
