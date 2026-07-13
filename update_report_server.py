@@ -142,12 +142,15 @@ def svg_line_chart(title: str, series: list[tuple[str, list[tuple[str, float | N
     if min_v == max_v:
         min_v -= 1
         max_v += 1
-    width = 680
-    height = 230
-    left = 54
-    right = 20
-    top = 28
-    bottom = 42
+    padding = (max_v - min_v) * 0.08
+    min_v -= padding
+    max_v += padding
+    width = 920
+    height = 420
+    left = 92
+    right = 34
+    top = 34
+    bottom = 64
     labels = [label for label, _ in series[0][1]]
     count = max(1, len(labels) - 1)
 
@@ -155,6 +158,13 @@ def svg_line_chart(title: str, series: list[tuple[str, list[tuple[str, float | N
         x = left + index * ((width - left - right) / count)
         y = top + (max_v - value) / (max_v - min_v) * (height - top - bottom)
         return x, y
+
+    def axis_text(value: float) -> str:
+        if abs(value) >= 1000:
+            return f"{value:,.0f}"
+        if abs(value) >= 100:
+            return f"{value:,.1f}"
+        return f"{value:,.2f}"
 
     polylines = []
     dots = []
@@ -171,6 +181,15 @@ def svg_line_chart(title: str, series: list[tuple[str, list[tuple[str, float | N
             polylines.append(f'<polyline points="{" ".join(parts)}" fill="none" stroke="{color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>')
             legends.append(f'<span><i style="background:{color}"></i>{escape(name)}</span>')
 
+    tick_count = 5
+    y_ticks = []
+    for tick in range(tick_count):
+        value = min_v + (max_v - min_v) * tick / (tick_count - 1)
+        y = top + (max_v - value) / (max_v - min_v) * (height - top - bottom)
+        y_ticks.append(
+            f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="#eaeef2"/>'
+            f'<text x="{left-12}" y="{y+4:.1f}" text-anchor="end">{escape(axis_text(value))}</text>'
+        )
     x_labels = "".join(
         f'<text x="{left + i * ((width - left - right) / count):.1f}" y="{height - 14}" text-anchor="middle">{escape(label[2:7])}</text>'
         for i, label in enumerate(labels)
@@ -179,12 +198,49 @@ def svg_line_chart(title: str, series: list[tuple[str, list[tuple[str, float | N
         '<div class="fs-chart">'
         f'<div class="fs-chart-title">{escape(title)}</div>'
         f'<svg viewBox="0 0 {width} {height}" role="img">'
+        f'{"".join(y_ticks)}'
         f'<line x1="{left}" y1="{height-bottom}" x2="{width-right}" y2="{height-bottom}" stroke="#d0d7de"/>'
         f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="#d0d7de"/>'
         f'{"".join(polylines)}{"".join(dots)}{x_labels}'
         '</svg>'
         f'<div class="fs-legend">{"".join(legends)}</div>'
         "</div>"
+    )
+
+
+def chart_switcher(charts: list[str]) -> str:
+    if not charts:
+        return ""
+    inputs = []
+    panels = []
+    labels = []
+    for index, chart in enumerate(charts):
+        checked = " checked" if index == 0 else ""
+        input_id = f"fs-chart-tab-{index}"
+        inputs.append(f'<input id="{input_id}" name="fs-chart-tab" type="radio"{checked}>')
+        panels.append(f'<div class="fs-chart-panel fs-chart-panel-{index}">{chart}</div>')
+        title_match = chart.split('<div class="fs-chart-title">', 1)
+        label_text = f"图表{index + 1}"
+        if len(title_match) > 1:
+            label_text = title_match[1].split("</div>", 1)[0]
+        labels.append(f'<label for="{input_id}">{label_text}</label>')
+    selectors = []
+    for index in range(len(charts)):
+        selectors.append(
+            f"#fs-chart-tab-{index}:checked ~ .fs-chart-stage .fs-chart-panel-{index}{{display:block}}"
+            f"#fs-chart-tab-{index}:checked ~ .fs-chart-tabs label[for=fs-chart-tab-{index}]{{background:#0969da;color:#fff;border-color:#0969da}}"
+        )
+    return (
+        '<style>'
+        '.fs-chart-switcher>input{position:absolute;opacity:0;pointer-events:none}'
+        '.fs-chart-panel{display:none}'
+        f'{"".join(selectors)}'
+        '</style>'
+        '<section class="fs-chart-switcher">'
+        f'{"".join(inputs)}'
+        f'<div class="fs-chart-stage">{"".join(panels)}</div>'
+        f'<div class="fs-chart-tabs">{"".join(labels)}</div>'
+        '</section>'
     )
 
 
@@ -321,7 +377,7 @@ def fetch_financial_statements_html(code: str) -> str:
 
     return (
         '<style>'
-        '.fs-page{font-family:"Microsoft YaHei",Arial,sans-serif;color:#24292f}.fs-page h2{margin:0 0 8px;font-size:26px}.fs-sub{color:#57606a;margin-bottom:16px}.fs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.fs-panel{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:16px;overflow:auto}.fs-panel h3{margin:0 0 12px;font-size:18px}.fs-mini{width:100%;border-collapse:collapse}.fs-mini th,.fs-mini td{border-bottom:1px solid #d8dee4;padding:8px;text-align:left}.fs-mini th{color:#57606a;font-weight:600;width:46%}.fs-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}.fs-card{border:1px solid #d8dee4;border-radius:8px;background:#f6f8fa;padding:12px}.fs-label{color:#57606a;font-size:13px}.fs-value{margin-top:6px;font-weight:800;font-size:18px}.fs-chart{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:12px;overflow:hidden}.fs-chart-title{font-weight:800;margin-bottom:8px}.fs-chart svg{display:block;width:100%;height:auto;max-width:100%;overflow:visible}.fs-chart text{font-size:12px;fill:#57606a}.fs-legend{display:flex;flex-wrap:wrap;gap:6px 10px;color:#57606a;font-size:12px;line-height:1.3}.fs-legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.fs-legend i{display:inline-block;width:9px;height:9px;border-radius:999px;flex:0 0 auto}.fs-note{margin:12px 0;color:#57606a;font-size:13px;line-height:1.6}.empty{color:#57606a}@media(max-width:720px){.fs-grid{grid-template-columns:1fr}.fs-chart{padding:10px}.fs-chart text{font-size:13px}.fs-legend{font-size:12px}}'
+        '.fs-page{font-family:"Microsoft YaHei",Arial,sans-serif;color:#24292f}.fs-page h2{margin:0 0 8px;font-size:26px}.fs-sub{color:#57606a;margin-bottom:16px}.fs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.fs-panel{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:16px;overflow:auto}.fs-panel h3{margin:0 0 12px;font-size:18px}.fs-mini{width:100%;border-collapse:collapse}.fs-mini th,.fs-mini td{border-bottom:1px solid #d8dee4;padding:8px;text-align:left}.fs-mini th{color:#57606a;font-weight:600;width:46%}.fs-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}.fs-card{border:1px solid #d8dee4;border-radius:8px;background:#f6f8fa;padding:12px}.fs-label{color:#57606a;font-size:13px}.fs-value{margin-top:6px;font-weight:800;font-size:18px}.fs-chart-switcher{margin-top:14px}.fs-chart-stage{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:18px;overflow:hidden}.fs-chart{border:0;background:#fff;padding:0;overflow:hidden}.fs-chart-title{font-weight:900;font-size:22px;margin-bottom:10px}.fs-chart svg{display:block;width:100%;height:auto;max-width:100%;overflow:visible}.fs-chart text{font-size:13px;fill:#57606a}.fs-legend{display:flex;flex-wrap:wrap;gap:8px 14px;color:#57606a;font-size:14px;line-height:1.35;margin-top:6px}.fs-legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.fs-legend i{display:inline-block;width:10px;height:10px;border-radius:999px;flex:0 0 auto}.fs-chart-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.fs-chart-tabs label{border:1px solid #d0d7de;border-radius:999px;background:#fff;color:#24292f;padding:7px 12px;font-size:13px;font-weight:700;cursor:pointer}.fs-chart-tabs label:hover{background:#f6f8fa}.fs-note{margin:12px 0;color:#57606a;font-size:13px;line-height:1.6}.empty{color:#57606a}@media(max-width:720px){.fs-grid{grid-template-columns:1fr}.fs-chart-stage{padding:12px}.fs-chart-title{font-size:18px}.fs-chart text{font-size:14px}.fs-legend{font-size:12px}.fs-chart-tabs label{font-size:12px;padding:6px 10px}}'
         '</style>'
         '<div class="fs-page">'
         f'<h2>{escape(str(name))} 三大财务报表</h2>'
@@ -336,9 +392,7 @@ def fetch_financial_statements_html(code: str) -> str:
         f'{income_table}{balance_table}{balance_metrics}{cash_table}{cash_judgment}'
         '</div>'
         '<div class="fs-note">单位默认显示为亿元；比率类指标按最新一期报表计算。部分公司或行业字段可能为空，页面会保留项目但显示“-”。</div>'
-        '<div class="fs-grid">'
-        f'{"".join(charts)}'
-        '</div>'
+        f'{chart_switcher(charts)}'
         '</div>'
     )
 
