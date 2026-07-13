@@ -1062,6 +1062,10 @@ def write_html_report(
     .broker-content {{ margin-top: 8px; color: #334155; font-size: 13px; line-height: 1.55; overflow-x: auto; }}
     .broker-content table {{ min-width: 720px; border-radius: 6px; }}
     .broker-content th, .broker-content td {{ padding: 7px 8px; font-size: 13px; }}
+    .financial-button {{ margin-top: 10px; border: 1px solid #0969da; border-radius: 6px; background: #eff6ff; color: #0969da; padding: 7px 12px; cursor: pointer; font-size: 14px; font-weight: 700; }}
+    .financial-button:hover {{ background: #dbeafe; }}
+    .financial-button:disabled {{ opacity: .65; cursor: wait; }}
+    .financial-content {{ margin-top: 12px; }}
     .tier-legend {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; margin: 0 0 20px; }}
     .tier-item {{ border-radius: 6px; padding: 8px 10px; color: #111827; background: #fff; border: 1px solid #e5e7eb; }}
     .tier-item strong {{ display: block; margin-bottom: 2px; }}
@@ -1370,6 +1374,11 @@ def write_html_report(
             </div>
           </section>
           <section class="detail-section">
+            <h3>三大财务报表</h3>
+            <button class="financial-button" type="button" data-code="${{escapeHtml(item.code)}}">查看三大财务报表</button>
+            <div class="financial-content">点击按钮后打开第二个子页面：利润表、资产负债表、现金流量表和关键趋势图。</div>
+          </section>
+          <section class="detail-section">
             <h3>AI总结</h3>
             <div class="detail-ai">${{escapeHtml(item.ai_summary)}}</div>
           </section>
@@ -1432,11 +1441,41 @@ def write_html_report(
         button.disabled = false;
       }}
     }}
+    async function loadFinancialStatements(button) {{
+      const code = button.dataset.code;
+      const section = button.closest('.detail-section');
+      const content = section ? section.querySelector('.financial-content') : null;
+      if (!code || !content) return;
+      if (isStaticSite) {{
+        content.textContent = '静态版不包含实时三大财务报表，请使用云端版网站查看。';
+        return;
+      }}
+      button.disabled = true;
+      button.textContent = '加载中...';
+      content.textContent = '正在抓取三大财务报表...';
+      try {{
+        const response = await fetch(apiBase + '/financials?code=' + encodeURIComponent(code));
+        const data = await response.json();
+        if (!response.ok || !data.ok) {{
+          throw new Error(data.error || data.detail || '抓取失败');
+        }}
+        content.innerHTML = data.html || '暂无三大财务报表数据';
+        button.textContent = '刷新三大财务报表';
+      }} catch (error) {{
+        content.textContent = '无法抓取三大财务报表：' + String(error.message || error);
+        button.textContent = '查看三大财务报表';
+      }} finally {{
+        button.disabled = false;
+      }}
+    }}
     document.addEventListener('click', event => {{
       const target = event.target;
       if (target && target.classList && target.classList.contains('broker-button')) {{
         const container = target.closest('.broker-forecast');
         if (container) loadBrokerForecast(container);
+      }}
+      if (target && target.classList && target.classList.contains('financial-button')) {{
+        loadFinancialStatements(target);
       }}
     }});
 
