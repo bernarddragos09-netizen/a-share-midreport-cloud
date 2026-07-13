@@ -1424,7 +1424,7 @@ def write_html_report(
       button.textContent = '抓取中...';
       content.textContent = '正在抓取券商预测...';
       try {{
-        const response = await fetch(apiBase + '/broker?code=' + encodeURIComponent(code));
+        const response = await fetch(apiBase + '/broker?code=' + encodeURIComponent(code) + '&_=' + Date.now(), {{ cache: 'no-store' }});
         const data = await response.json();
         if (!response.ok || !data.ok) {{
           throw new Error(data.error || data.detail || '抓取失败');
@@ -1454,7 +1454,7 @@ def write_html_report(
       button.textContent = '加载中...';
       content.textContent = '正在抓取三大财务报表...';
       try {{
-        const response = await fetch(apiBase + '/financials?code=' + encodeURIComponent(code));
+        const response = await fetch(apiBase + '/financials?code=' + encodeURIComponent(code) + '&_=' + Date.now(), {{ cache: 'no-store' }});
         const data = await response.json();
         if (!response.ok || !data.ok) {{
           throw new Error(data.error || data.detail || '抓取失败');

@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -43,7 +43,8 @@ def health() -> dict[str, object]:
 
 
 @app.get("/api/broker")
-def broker(code: str) -> dict[str, object]:
+def broker(code: str, response: Response) -> dict[str, object]:
+    response.headers["Cache-Control"] = "no-store"
     try:
         html = fetch_broker_forecast_html(code)
         return {"ok": True, "html": html}
@@ -52,7 +53,8 @@ def broker(code: str) -> dict[str, object]:
 
 
 @app.get("/api/financials")
-def financials(code: str) -> dict[str, object]:
+def financials(code: str, response: Response) -> dict[str, object]:
+    response.headers["Cache-Control"] = "no-store"
     try:
         html = fetch_financial_statements_html(code)
         return {"ok": True, "html": html}
