@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fetch upcoming 2026 interim-report appointment dates from SSE.
+"""Fetch upcoming 2026 interim-report appointment dates for A shares.
 
 This script focuses on the upcoming 2026 half-year/interim report schedule.
-Source: Shanghai Stock Exchange periodic report appointment page.
+Sources: SSE appointment page and Eastmoney appointment data.
 """
 
 from __future__ import annotations
@@ -27,6 +27,23 @@ EASTMONEY_QUOTE_BATCH_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 REFERER = "https://www.sse.com.cn/disclosure/listedinfo/periodic/"
 OUTPUT_DIR = Path("a_share_midreport_2026_upcoming_sse")
 CHINA_TZ = timezone(timedelta(hours=8))
+
+
+def eastmoney_secid(code: str) -> str:
+    code = str(code or "").strip()
+    if code.startswith(("6", "9")):
+        return f"1.{code}"
+    return f"0.{code}"
+
+
+def eastmoney_market_code(code: str) -> str:
+    code = str(code or "").strip()
+    return f"SH{code}" if code.startswith(("6", "9")) else f"SZ{code}"
+
+
+def date_only(value: Any) -> str:
+    text = str(value or "").strip()
+    return text[:10] if text else ""
 
 SECTOR_RULES = [
     ("金融", ["银行", "保险", "证券", "多元金融", "期货", "信托", "金融"]),
@@ -126,8 +143,18 @@ def fetch_eastmoney_pages(
                 "Referer": "https://data.eastmoney.com/bbsj/202606/yjbb.html",
             },
         )
-        with request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        data = None
+        for attempt in range(1, 4):
+            try:
+                with request.urlopen(req, timeout=45) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                break
+            except Exception as exc:
+                print(f"Eastmoney {report_name} page {page_no} failed ({attempt}/3): {exc}", file=sys.stderr)
+                if attempt < 3:
+                    time.sleep(1.5 * attempt)
+        if data is None:
+            raise RuntimeError(f"Eastmoney {report_name} page {page_no} failed after retries")
         result = data.get("result") or {}
         page_rows = result.get("data") or []
         pages = int(result.get("pages") or 0)
@@ -186,7 +213,7 @@ def fetch_sector_lookup(stock_codes: list[str]) -> dict[str, list[str]]:
 
     for start in range(0, len(unique_codes), batch_size):
         batch = unique_codes[start : start + batch_size]
-        secids = ",".join(f"1.{code}" for code in batch)
+        secids = ",".join(eastmoney_secid(code) for code in batch)
         params = {
             "fltt": 2,
             "invt": 2,
@@ -226,8 +253,20 @@ def fetch_sector_lookup(stock_codes: list[str]) -> dict[str, list[str]]:
 
 
 def final_appointment_date(row: dict[str, Any]) -> str:
-    for key in ("actualDate", "publishDate3", "publishDate2", "publishDate1", "publishDate0"):
-        value = str(row.get(key, "") or "").strip()
+    for key in (
+        "actualDate",
+        "publishDate3",
+        "publishDate2",
+        "publishDate1",
+        "publishDate0",
+        "ACTUAL_PUBLISH_DATE",
+        "THIRD_CHANGE_DATE",
+        "SECOND_CHANGE_DATE",
+        "FIRST_CHANGE_DATE",
+        "APPOINT_PUBLISH_DATE",
+        "FIRST_APPOINT_DATE",
+    ):
+        value = date_only(row.get(key, ""))
         if value:
             return value
     return ""
@@ -267,20 +306,68 @@ def fetch_sse_2026_midreport(page_size: int = 1000) -> list[dict[str, Any]]:
         page_no += 1
 
 
+def fetch_a_share_2026_midreport(page_size: int = 500) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    page_no = 1
+    pages = 1
+    while page_no <= pages:
+        params = {
+            "reportName": "RPT_PUBLIC_BS_APPOIN",
+            "columns": "ALL",
+            "filter": "(REPORT_DATE='2026-06-30')",
+            "pageNumber": page_no,
+            "pageSize": page_size,
+            "sortColumns": "FIRST_APPOINT_DATE,SECURITY_CODE",
+            "sortTypes": "1,1",
+        }
+        url = EASTMONEY_URL + "?" + parse.urlencode(params)
+        req = request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://data.eastmoney.com/bbsj/202606/yysj.html",
+            },
+        )
+        with request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        result = data.get("result") or {}
+        page_rows = result.get("data") or []
+        pages = int(result.get("pages") or pages or 1)
+        for row in page_rows:
+            secucode = str(row.get("SECUCODE", "") or "")
+            security_type = str(row.get("SECURITY_TYPE", "") or "")
+            if secucode.endswith((".SH", ".SZ")) and security_type == "A股":
+                rows.append(row)
+        print(f"Fetched Eastmoney appointments page {page_no}/{pages}: {len(page_rows)} rows, kept {len(rows)}")
+        if not page_rows:
+            break
+        page_no += 1
+    deduped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        code = str(row.get("SECURITY_CODE", "") or "").strip()
+        if code:
+            deduped[code] = row
+    return list(deduped.values())
+
+
 def normalized_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     detail_rows = []
     for row in rows:
+        stock_code = str(row.get("companyCode") or row.get("SECURITY_CODE") or "").strip()
+        secucode = str(row.get("SECUCODE") or "").strip()
+        market = "深市" if secucode.endswith(".SZ") else "沪市" if secucode.endswith(".SH") else str(row.get("TRADE_MARKET") or "")
         detail_rows.append(
             {
-                "stock_code": str(row.get("companyCode", "") or "").strip(),
-                "stock_name": str(row.get("companyAbbr", "") or "").strip(),
+                "stock_code": stock_code,
+                "stock_name": str(row.get("companyAbbr") or row.get("SECURITY_NAME_ABBR") or "").strip(),
+                "market": market,
                 "report_type": "半年报（中报）",
-                "report_year": str(row.get("publishYear", "") or "").strip(),
-                "first_appointment_date": str(row.get("publishDate0", "") or "").strip(),
-                "first_change_date": str(row.get("publishDate1", "") or "").strip(),
-                "second_change_date": str(row.get("publishDate2", "") or "").strip(),
-                "third_change_date": str(row.get("publishDate3", "") or "").strip(),
-                "actual_disclosure_date": str(row.get("actualDate", "") or "").strip(),
+                "report_year": str(row.get("publishYear") or row.get("REPORT_YEAR") or "").strip(),
+                "first_appointment_date": date_only(row.get("publishDate0") or row.get("FIRST_APPOINT_DATE")),
+                "first_change_date": date_only(row.get("publishDate1") or row.get("FIRST_CHANGE_DATE")),
+                "second_change_date": date_only(row.get("publishDate2") or row.get("SECOND_CHANGE_DATE")),
+                "third_change_date": date_only(row.get("publishDate3") or row.get("THIRD_CHANGE_DATE")),
+                "actual_disclosure_date": date_only(row.get("actualDate") or row.get("ACTUAL_PUBLISH_DATE")),
                 "stat_date": final_appointment_date(row),
             }
         )
@@ -831,6 +918,7 @@ def write_html_report(
             detail_item = {
                 "code": company["stock_code"],
                 "name": company["stock_name"],
+                "market": company.get("market", ""),
                 "initials": chinese_initials(company["stock_name"]),
                 "date": date,
                 "first_date": status["first_date"],
@@ -849,11 +937,12 @@ def write_html_report(
                     "name": company["stock_name"],
                     "initials": detail_item["initials"],
                     "date": date,
+                    "market": company.get("market", ""),
                 }
             )
         company_items = "\n".join(
             '<tr class="company-row" id="company-{}" data-code="{}" data-date="{}">'
-            '<td><span class="code">{}</span><strong>{}</strong></td>'
+            '<td><span class="code">{}</span><strong>{}</strong><small>{}</small></td>'
             '<td><span class="sector-tags">{}</span></td>'
             '<td class="stars">{}</td>'
             '<td><span class="table-metric {}">{}</span><small>{}</small></td>'
@@ -867,6 +956,7 @@ def write_html_report(
                 html.escape(date),
                 html.escape(detail_index[company["stock_code"]]["code"]),
                 html.escape(detail_index[company["stock_code"]]["name"]),
+                html.escape(detail_index[company["stock_code"]].get("market", "")),
                 "".join(
                     f'<span class="sector-tag">{html.escape(sector)}</span>'
                     for sector in detail_index[company["stock_code"]]["sectors"]
@@ -970,7 +1060,7 @@ def write_html_report(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>沪市2026年中报预约披露日期统计</title>
+  <title>A股2026年中报预约披露日期统计</title>
   <style>
     body {{ margin: 0; padding: 28px; background: #f6f7fb; color: #1f2937; font-family: "Microsoft YaHei", Arial, sans-serif; }}
     main {{ max-width: 980px; margin: 0 auto; }}
@@ -1111,10 +1201,10 @@ def write_html_report(
 </head>
 <body>
   <main>
-    <h1>沪市2026年中报预约披露日期统计</h1>
-    <p class="notice">当前文件统计的是上交所已发布的沪市 2026 年半年报（中报）预约披露时间。深市/北交所若尚未发布完整预约表，需要待官方数据放出后再合并。</p>
+    <h1>A股2026年中报预约披露日期统计</h1>
+    <p class="notice">当前文件统计的是沪市与深市 A 股 2026 年半年报（中报）预约披露时间，已过滤北交所记录。</p>
     <section class="meta">
-      <div>数据源：上海证券交易所定期报告预约情况</div>
+      <div>数据源：东方财富预约披露时间、上海证券交易所定期报告预约情况</div>
       <div>报告类型：2026 年半年报（中报）</div>
       <div>统计日期：首次预约日优先，若有变更/实际披露则取最新可用日期</div>
       <div class="refresh-card"><span>{'静态生成时间' if static_site else '抓取时间'}：{html.escape(now)}<span id="refreshStatus" class="refresh-status">{'；公开版不依赖本地服务' if static_site else ''}</span></span><button id="refreshButton" class="refresh-button" type="button"{' disabled' if static_site else ''}>{'静态版' if static_site else '抓取最新'}</button></div>
@@ -1549,7 +1639,7 @@ def write_html_report(
 
 def main() -> int:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    raw_rows = fetch_sse_2026_midreport()
+    raw_rows = fetch_a_share_2026_midreport()
     financial_lookup = fetch_financial_lookup()
     performance_forecasts = fetch_key_performance_forecasts()
     detail_rows = normalized_rows(raw_rows)
@@ -1586,9 +1676,9 @@ def main() -> int:
     )
 
     md_lines = [
-        "# 沪市2026年中报预约披露日期统计",
+        "# A股2026年中报预约披露日期统计",
         "",
-        f"- 数据源：上海证券交易所定期报告预约情况",
+        f"- 数据源：东方财富预约披露时间（沪市+深市A股，已过滤北交所）",
         f"- 公司记录数：{len(detail_rows)}",
         f"- 7月15日前关键业绩预告：{len(performance_forecasts)}",
         f"- 抓取时间：{datetime.now(CHINA_TZ).strftime('%Y-%m-%d %H:%M:%S')}",

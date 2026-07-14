@@ -24,6 +24,11 @@ SCRIPT = ROOT / "fetch_2026_midreport_upcoming_sse.py"
 EASTMONEY_DATA_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 
 
+def eastmoney_market_code(code: str) -> str:
+    code = str(code or "").strip()
+    return f"SH{code}" if code.startswith(("6", "9")) else f"SZ{code}"
+
+
 def fmt_num(value: object, digits: int = 2) -> str:
     if value in (None, ""):
         return "-"
@@ -541,7 +546,7 @@ def fetch_broker_forecast_html(code: str) -> str:
     code = "".join(ch for ch in code if ch.isdigit())[:6]
     if len(code) != 6:
         raise ValueError("股票代码必须是 6 位数字")
-    market_code = f"SH{code}"
+    market_code = eastmoney_market_code(code)
     url = (
         "https://emweb.eastmoney.com/PC_HSF10/ProfitForecast/PageAjax?"
         + urllib.parse.urlencode({"code": market_code})
