@@ -525,7 +525,7 @@ def is_key_performance_forecast(row: dict[str, Any]) -> bool:
     return growth is not None and abs(growth) >= 50
 
 
-def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dict[str, str]]:
+def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dict[str, Any]]:
     rows = fetch_eastmoney_pages(
         "RPT_PUBLIC_OP_NEWPREDICT",
         "(REPORT_DATE='2026-06-30')",
@@ -543,7 +543,7 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
             continue
         rows_by_code[code].append(row)
 
-    forecasts: list[dict[str, str]] = []
+    forecasts: list[dict[str, Any]] = []
     for code, code_rows in rows_by_code.items():
         trigger_rows = [row for row in code_rows if is_key_performance_forecast(row)]
         if not trigger_rows:
@@ -569,6 +569,15 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
         trigger_growth = forecast_growth_value(trigger_row)
         parent_growth = forecast_growth_value(parent_row)
         deduct_growth = forecast_growth_value(deduct_row)
+        # Rank by the attributable-profit forecast first.  Deducted profit and
+        # the trigger metric are only fallbacks when that percentage is absent.
+        sort_growth = (
+            parent_growth
+            if parent_growth is not None
+            else deduct_growth
+            if deduct_growth is not None
+            else trigger_growth
+        )
         forecasts.append(
             {
                 "stock_code": code,
@@ -581,6 +590,7 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
                 "forecast_deduct_profit": blank_amount_range_to_yi(deduct_row.get("PREDICT_AMT_LOWER"), deduct_row.get("PREDICT_AMT_UPPER")),
                 "forecast_deduct_growth": blank_arrow_pct_text(deduct_growth),
                 "forecast_deduct_class": growth_class(deduct_row.get("ADD_AMP_LOWER"), deduct_row.get("ADD_AMP_UPPER"), deduct_row.get("INCREASE_JZ")),
+                "sort_growth": sort_growth,
                 "q1_parent_profit": blank_amount_to_yi(q1_row.get("PARENT_NETPROFIT")),
                 "q1_parent_yoy": blank_pct_text(q1_row.get("PARENT_NETPROFIT_RATIO")),
                 "q1_parent_class": growth_class(q1_row.get("PARENT_NETPROFIT_RATIO")),
@@ -595,7 +605,14 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
                 "content": str((deduct_row or parent_row or trigger_row).get("PREDICT_CONTENT", "") or "").strip(),
             }
         )
-    forecasts.sort(key=lambda item: (item["notice_date"], item["stock_code"]))
+    forecasts.sort(
+        key=lambda item: (
+            item["notice_date"],
+            item["sort_growth"] is None,
+            -(item["sort_growth"] or 0),
+            item["stock_code"],
+        )
+    )
     return forecasts
 
 
@@ -827,7 +844,7 @@ def write_html_report(
     total_rows: int,
     financial_lookup: dict[str, dict[str, Any]],
     sector_lookup: dict[str, list[str]],
-    performance_forecasts: list[dict[str, str]] | None = None,
+    performance_forecasts: list[dict[str, Any]] | None = None,
     broker_lookup: dict[str, str] | None = None,
     static_site: bool = False,
     api_base: str = "http://127.0.0.1:8765",
@@ -843,6 +860,14 @@ def write_html_report(
     for item in performance_forecasts:
         if item.get("notice_date"):
             forecast_groups[item["notice_date"]].append(item)
+    for items in forecast_groups.values():
+        items.sort(
+            key=lambda item: (
+                item.get("sort_growth") is None,
+                -(item.get("sort_growth") or 0),
+                item["stock_code"],
+            )
+        )
     early_by_date: dict[str, int] = {}
     for date, companies in groups.items():
         early_by_date[date] = sum(
