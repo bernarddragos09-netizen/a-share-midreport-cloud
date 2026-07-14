@@ -11,6 +11,7 @@ import csv
 import calendar
 import html
 import json
+import re
 import sys
 import time
 from collections import Counter, defaultdict
@@ -24,6 +25,7 @@ SSE_URL = "https://query.sse.com.cn/commonSoaQuery.do"
 EASTMONEY_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 EASTMONEY_QUOTE_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 EASTMONEY_QUOTE_BATCH_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+TENCENT_QUOTE_URL = "https://qt.gtimg.cn/q="
 REFERER = "https://www.sse.com.cn/disclosure/listedinfo/periodic/"
 OUTPUT_DIR = Path("a_share_midreport_2026_upcoming_sse")
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -249,6 +251,44 @@ def fetch_sector_lookup(stock_codes: list[str]) -> dict[str, list[str]]:
                 str(row.get("f14", "") or ""),
             )
         print(f"Fetched Eastmoney sector batch {start // batch_size + 1}: {len(rows)} rows")
+    return lookup
+
+
+def fetch_market_cap_lookup(stock_codes: list[str]) -> dict[str, float]:
+    """Fetch the latest total market value in yuan for the requested stocks."""
+    lookup: dict[str, float] = {}
+    unique_codes = sorted({code for code in stock_codes if code})
+    batch_size = 60
+
+    for start in range(0, len(unique_codes), batch_size):
+        batch = unique_codes[start : start + batch_size]
+        symbols = ",".join(
+            ("sh" if code.startswith(("6", "9")) else "sz") + code for code in batch
+        )
+        url = TENCENT_QUOTE_URL + symbols
+        req = request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://gu.qq.com/"},
+        )
+        for attempt in range(1, 4):
+            try:
+                with request.urlopen(req, timeout=30) as resp:
+                    payload = resp.read().decode("gbk", errors="replace")
+                break
+            except Exception as exc:
+                print(f"Market-cap request failed ({attempt}/3): {exc}", file=sys.stderr)
+                payload = ""
+                if attempt < 3:
+                    time.sleep(1.5 * attempt)
+        for code, fields in re.findall(r'v_(?:sh|sz)(\d{6})="([^"]*)"', payload):
+            values = fields.split("~")
+            try:
+                value = float(values[45]) * 100_000_000
+            except (TypeError, ValueError):
+                continue
+            if code and value > 0:
+                lookup[code] = value
+        print(f"Fetched Tencent market-cap batch {start // batch_size + 1}")
     return lookup
 
 
@@ -517,6 +557,22 @@ def forecast_growth_value(row: dict[str, Any]) -> float | None:
     return numeric_average(row.get("ADD_AMP_LOWER"), row.get("ADD_AMP_UPPER"), row.get("INCREASE_JZ"))
 
 
+def forecast_range_is_loss(row: dict[str, Any]) -> bool:
+    values = []
+    for key in ("PREDICT_AMT_LOWER", "PREDICT_AMT_UPPER"):
+        try:
+            values.append(float(row.get(key)))
+        except (TypeError, ValueError):
+            continue
+    return bool(values) and max(values) < 0
+
+
+def market_cap_to_yi(value: float | None) -> str:
+    if value is None or value <= 0:
+        return ""
+    return f"{value / 100_000_000:,.2f} 亿"
+
+
 def is_key_performance_forecast(row: dict[str, Any]) -> bool:
     predict_type = str(row.get("PREDICT_TYPE", "") or "").strip()
     if predict_type in {"扭亏", "首亏", "续亏"}:
@@ -591,6 +647,8 @@ def fetch_key_performance_forecasts(cutoff_date: str = "2026-07-15") -> list[dic
                 "forecast_deduct_growth": blank_arrow_pct_text(deduct_growth),
                 "forecast_deduct_class": growth_class(deduct_row.get("ADD_AMP_LOWER"), deduct_row.get("ADD_AMP_UPPER"), deduct_row.get("INCREASE_JZ")),
                 "sort_growth": sort_growth,
+                "is_loss": forecast_range_is_loss(parent_row)
+                or (not parent_row and forecast_range_is_loss(deduct_row)),
                 "q1_parent_profit": blank_amount_to_yi(q1_row.get("PARENT_NETPROFIT")),
                 "q1_parent_yoy": blank_pct_text(q1_row.get("PARENT_NETPROFIT_RATIO")),
                 "q1_parent_class": growth_class(q1_row.get("PARENT_NETPROFIT_RATIO")),
@@ -845,6 +903,7 @@ def write_html_report(
     financial_lookup: dict[str, dict[str, Any]],
     sector_lookup: dict[str, list[str]],
     performance_forecasts: list[dict[str, Any]] | None = None,
+    market_cap_lookup: dict[str, float] | None = None,
     broker_lookup: dict[str, str] | None = None,
     static_site: bool = False,
     api_base: str = "http://127.0.0.1:8765",
@@ -852,11 +911,12 @@ def write_html_report(
     now = datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
     broker_lookup = broker_lookup or {}
     performance_forecasts = performance_forecasts or []
+    market_cap_lookup = market_cap_lookup or {}
     table_rows = []
     search_index = []
     detail_index: dict[str, dict[str, Any]] = {}
     count_by_date = {row["date"]: row["company_count"] for row in daily_rows}
-    forecast_groups: dict[str, list[dict[str, str]]] = defaultdict(list)
+    forecast_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in performance_forecasts:
         if item.get("notice_date"):
             forecast_groups[item["notice_date"]].append(item)
@@ -1006,9 +1066,10 @@ def write_html_report(
             for company in companies
         )
         forecast_items = "\n".join(
-            '<tr class="forecast-row" id="forecast-{}" data-code="{}" data-date="{}" data-forecast-index="{}">'
+            '<tr class="forecast-row" id="forecast-{}" data-code="{}" data-date="{}" data-forecast-index="{}" data-forecast-growth="{}" data-market-cap="{}" data-is-loss="{}">'
             '<td><span class="code">{}</span><strong>{}</strong></td>'
             '<td><span class="forecast-type">{}</span></td>'
+            '<td><span class="table-metric">{}</span><small>最新总市值</small></td>'
             '<td><span class="table-metric">{}</span><small class="{}">{}</small></td>'
             '<td><span class="table-metric">{}</span><small class="{}">{}</small></td>'
             '<td><span class="table-metric">{}</span><small class="{}">{}</small></td>'
@@ -1019,9 +1080,15 @@ def write_html_report(
                 html.escape(item["stock_code"]),
                 html.escape(date),
                 index,
+                html.escape(
+                    "" if item.get("sort_growth") is None else f"{float(item['sort_growth']):.8f}"
+                ),
+                f"{float(market_cap_lookup.get(item['stock_code']) or 0) / 100_000_000:.6f}",
+                "true" if item.get("is_loss") else "false",
                 html.escape(item["stock_code"]),
                 html.escape(item["stock_name"]),
                 html.escape(item["predict_type"]),
+                html.escape(market_cap_to_yi(market_cap_lookup.get(item["stock_code"])) or "暂无数据"),
                 html.escape(item["forecast_parent_profit"]),
                 html.escape(item["forecast_parent_class"]),
                 html.escape(item["forecast_parent_growth"]),
@@ -1054,7 +1121,7 @@ def write_html_report(
             '<summary>展开业绩预告列表</summary>'
             '<div class="company-table-wrap">'
             '<table class="company-table forecast-table">'
-            '<thead><tr><th>股票</th><th>预告类型</th><th>预告归母净利润</th><th>预告扣非归母净利润</th><th>一季报归母净利润</th><th>一季报扣非归母净利润</th><th>公告摘要</th></tr></thead>'
+            '<thead><tr><th>股票</th><th>预告类型</th><th>总市值</th><th>预告归母净利润</th><th>预告扣非归母净利润</th><th>一季报归母净利润</th><th>一季报扣非归母净利润</th><th>公告摘要</th></tr></thead>'
             f"<tbody>{forecast_items}</tbody>"
             "</table>"
             "</div>"
@@ -1148,6 +1215,17 @@ def write_html_report(
     .status-early {{ background: #fee2e2; color: #b91c1c; }}
     .forecast-inline {{ display: inline-flex; margin-left: 10px; border-radius: 999px; padding: 3px 8px; background: #fef3c7; color: #92400e; font-size: 12px; font-weight: 800; }}
     .forecast-details {{ margin-top: 12px; }}
+    .forecast-filter {{ display: grid; grid-template-columns: minmax(180px, 1fr) repeat(2, minmax(150px, .65fr)) auto; align-items: end; gap: 10px; margin: 0 0 18px; padding: 14px; border: 1px solid #d8dee4; border-radius: 8px; background: #fff; }}
+    .forecast-filter-field {{ display: grid; gap: 6px; }}
+    .forecast-filter-field label, .forecast-filter-label {{ color: #57606a; font-size: 12px; font-weight: 700; }}
+    .forecast-filter select, .forecast-filter input[type="number"] {{ width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 9px; background: #fff; color: #24292f; font-size: 14px; }}
+    .forecast-filter-toggles {{ display: flex; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; }}
+    .forecast-filter-toggle {{ display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d0d7de; border-radius: 6px; padding: 7px 10px; color: #24292f; background: #f6f8fa; cursor: pointer; font-size: 13px; }}
+    .forecast-filter-toggle:has(input:checked) {{ border-color: #0969da; background: #ddf4ff; color: #0550ae; }}
+    .forecast-filter-toggle input {{ margin: 0; accent-color: #0969da; }}
+    .forecast-filter-reset {{ border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #24292f; padding: 8px 11px; cursor: pointer; white-space: nowrap; font-size: 14px; }}
+    .forecast-filter-reset:hover {{ background: #f6f8fa; }}
+    .forecast-filter-summary {{ grid-column: 1 / -1; color: #57606a; font-size: 13px; }}
     .forecast-type {{ display: inline-flex; border-radius: 999px; padding: 3px 8px; background: #fff7ed; color: #c2410c; font-weight: 800; white-space: nowrap; }}
     .forecast-content {{ min-width: 280px; color: #334155; font-size: 13px; line-height: 1.55; }}
     .trigger-reason {{ margin-bottom: 4px; color: #92400e; font-weight: 800; }}
@@ -1217,6 +1295,7 @@ def write_html_report(
     .detail-ai {{ font-size: 18px; line-height: 1.7; color: #24292f; }}
     @media (max-width: 720px) {{
       body {{ padding: 16px; }}
+      .forecast-filter {{ grid-template-columns: 1fr; }}
       .detail-overlay {{ padding: 14px; }}
       .detail-header {{ grid-template-columns: 1fr; }}
       .detail-score {{ text-align: left; }}
@@ -1249,6 +1328,29 @@ def write_html_report(
       <div class="tier-item"><strong style="color:#7BC96F">⑤ 小跌</strong>-15% ～ -5%</div>
       <div class="tier-item"><strong style="color:#2E8B57">⑥ 大跌</strong>-30% ～ -15%</div>
       <div class="tier-item"><strong style="color:#006400">⑦ 暴跌</strong>≤ -30%</div>
+    </section>
+    <section class="forecast-filter" aria-label="业绩预告筛选">
+      <div class="forecast-filter-field">
+        <label for="forecastSort">增长率排序</label>
+        <select id="forecastSort">
+          <option value="desc">增长率：高到低</option>
+          <option value="asc">增长率：低到高</option>
+        </select>
+      </div>
+      <div class="forecast-filter-field">
+        <label for="forecastMinMarketCap">最小市值（亿元）</label>
+        <input id="forecastMinMarketCap" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如 100">
+      </div>
+      <div class="forecast-filter-field">
+        <label for="forecastMaxMarketCap">最大市值（亿元）</label>
+        <input id="forecastMaxMarketCap" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如 1000">
+      </div>
+      <button id="forecastFilterReset" class="forecast-filter-reset" type="button">重置</button>
+      <div class="forecast-filter-toggles">
+        <label class="forecast-filter-toggle"><input id="forecastGrowthOnly" type="checkbox"><span>仅增长</span></label>
+        <label class="forecast-filter-toggle"><input id="forecastLossOnly" type="checkbox"><span>仅亏损</span></label>
+      </div>
+      <div id="forecastFilterSummary" class="forecast-filter-summary">筛选条件可同时叠加，市值采用最新总市值。</div>
     </section>
     <section class="calendar-wrap" aria-label="中报预约日历">
       {"".join(calendar_months)}
@@ -1327,27 +1429,100 @@ def write_html_report(
       button.addEventListener('click', () => jumpToDate(button.dataset.date));
     }});
     const forecastPageSize = 10;
+    const forecastSort = document.getElementById('forecastSort');
+    const forecastMinMarketCap = document.getElementById('forecastMinMarketCap');
+    const forecastMaxMarketCap = document.getElementById('forecastMaxMarketCap');
+    const forecastGrowthOnly = document.getElementById('forecastGrowthOnly');
+    const forecastLossOnly = document.getElementById('forecastLossOnly');
+    const forecastFilterReset = document.getElementById('forecastFilterReset');
+    const forecastFilterSummary = document.getElementById('forecastFilterSummary');
+
+    function optionalNumber(input) {{
+      const text = String(input.value || '').trim();
+      if (!text) return null;
+      const value = Number(text);
+      return Number.isFinite(value) && value >= 0 ? value : null;
+    }}
+    function forecastRows(date) {{
+      return Array.from(document.querySelectorAll(`.forecast-row[data-date="${{date}}"]`));
+    }}
+    function rowGrowth(row) {{
+      const value = Number(row.dataset.forecastGrowth);
+      return Number.isFinite(value) ? value : null;
+    }}
+    function matchesForecastFilter(row) {{
+      const growth = rowGrowth(row);
+      const marketCap = Number(row.dataset.marketCap || 0);
+      const minMarketCap = optionalNumber(forecastMinMarketCap);
+      const maxMarketCap = optionalNumber(forecastMaxMarketCap);
+      if (forecastGrowthOnly.checked && !(growth !== null && growth > 0)) return false;
+      if (forecastLossOnly.checked && row.dataset.isLoss !== 'true') return false;
+      if (minMarketCap !== null && marketCap < minMarketCap) return false;
+      if (maxMarketCap !== null && (marketCap <= 0 || marketCap > maxMarketCap)) return false;
+      return true;
+    }}
+    function sortForecastRows(date) {{
+      const rows = forecastRows(date);
+      const direction = forecastSort.value === 'asc' ? 1 : -1;
+      rows.sort((left, right) => {{
+        const leftGrowth = rowGrowth(left);
+        const rightGrowth = rowGrowth(right);
+        if (leftGrowth === null && rightGrowth === null) return left.dataset.code.localeCompare(right.dataset.code);
+        if (leftGrowth === null) return 1;
+        if (rightGrowth === null) return -1;
+        return (leftGrowth - rightGrowth) * direction || left.dataset.code.localeCompare(right.dataset.code);
+      }});
+      const body = rows[0] && rows[0].parentElement;
+      rows.forEach((row, index) => {{
+        row.dataset.forecastIndex = String(index);
+        if (body) body.appendChild(row);
+      }});
+      return rows;
+    }}
     function renderForecastPage(date, page) {{
       const pager = document.querySelector(`.forecast-pager[data-date="${{date}}"]`);
-      if (!pager) return;
-      const total = Number(pager.dataset.total || 0);
+      if (!pager) return {{ total: 0, matched: 0 }};
+      const rows = sortForecastRows(date);
+      const matchingRows = rows.filter(matchesForecastFilter);
+      const total = matchingRows.length;
       const pageCount = Math.max(1, Math.ceil(total / forecastPageSize));
       const currentPage = Math.min(Math.max(1, page), pageCount);
-      document.querySelectorAll(`.forecast-row[data-date="${{date}}"]`).forEach(row => {{
-        const index = Number(row.dataset.forecastIndex || 0);
+      rows.forEach(row => {{ row.hidden = true; }});
+      matchingRows.forEach((row, index) => {{
         row.hidden = index < (currentPage - 1) * forecastPageSize || index >= currentPage * forecastPageSize;
       }});
-      const buttons = Array.from({{ length: pageCount }}, (_, index) => {{
+      const buttons = total ? Array.from({{ length: pageCount }}, (_, index) => {{
         const pageNo = index + 1;
         return `<button class="pager-button${{pageNo === currentPage ? ' is-active' : ''}}" type="button" data-date="${{date}}" data-page="${{pageNo}}">${{pageNo}}</button>`;
-      }}).join('');
+      }}).join('') : '';
       const start = total ? (currentPage - 1) * forecastPageSize + 1 : 0;
       const end = Math.min(currentPage * forecastPageSize, total);
       pager.innerHTML = `<span>业绩预告二级列表：${{start}}-${{end}} / ${{total}} 家</span>${{buttons}}`;
+      return {{ total: rows.length, matched: total }};
     }}
-    document.querySelectorAll('.forecast-pager').forEach(pager => {{
-      renderForecastPage(pager.dataset.date, 1);
+    function refreshForecastFilter() {{
+      let total = 0;
+      let matched = 0;
+      document.querySelectorAll('.forecast-pager').forEach(pager => {{
+        const result = renderForecastPage(pager.dataset.date, 1);
+        total += result.total;
+        matched += result.matched;
+      }});
+      forecastFilterSummary.textContent = `当前匹配 ${{matched}} / ${{total}} 家；筛选条件可同时叠加，市值采用最新总市值。`;
+    }}
+    [forecastSort, forecastMinMarketCap, forecastMaxMarketCap, forecastGrowthOnly, forecastLossOnly].forEach(control => {{
+      control.addEventListener('input', refreshForecastFilter);
+      control.addEventListener('change', refreshForecastFilter);
     }});
+    forecastFilterReset.addEventListener('click', () => {{
+      forecastSort.value = 'desc';
+      forecastMinMarketCap.value = '';
+      forecastMaxMarketCap.value = '';
+      forecastGrowthOnly.checked = false;
+      forecastLossOnly.checked = false;
+      refreshForecastFilter();
+    }});
+    refreshForecastFilter();
     document.addEventListener('click', event => {{
       const target = event.target;
       if (target && target.classList && target.classList.contains('pager-button')) {{
@@ -1669,6 +1844,9 @@ def main() -> int:
     performance_forecasts = fetch_key_performance_forecasts()
     detail_rows = normalized_rows(raw_rows)
     sector_lookup = fetch_sector_lookup([row["stock_code"] for row in detail_rows])
+    market_cap_lookup = fetch_market_cap_lookup(
+        [item["stock_code"] for item in performance_forecasts]
+    )
 
     counts: Counter[str] = Counter(row["stat_date"] for row in detail_rows if row["stat_date"])
     groups: dict[str, list[dict[str, str]]] = defaultdict(list)
@@ -1698,6 +1876,7 @@ def main() -> int:
         financial_lookup,
         sector_lookup,
         performance_forecasts=performance_forecasts,
+        market_cap_lookup=market_cap_lookup,
     )
 
     md_lines = [

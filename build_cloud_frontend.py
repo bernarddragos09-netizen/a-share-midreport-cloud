@@ -12,6 +12,7 @@ from pathlib import Path
 from fetch_2026_midreport_upcoming_sse import (
     fetch_financial_lookup,
     fetch_key_performance_forecasts,
+    fetch_market_cap_lookup,
     write_html_report,
 )
 
@@ -71,6 +72,9 @@ def main() -> int:
     sector_lookup = load_sector_lookup()
     financial_lookup = fetch_financial_lookup()
     performance_forecasts = fetch_key_performance_forecasts()
+    market_cap_lookup = fetch_market_cap_lookup(
+        [item["stock_code"] for item in performance_forecasts]
+    )
     write_html_report(
         CLOUD_FRONTEND_DIR / "index.html",
         daily_rows,
@@ -79,6 +83,7 @@ def main() -> int:
         financial_lookup,
         sector_lookup,
         performance_forecasts=performance_forecasts,
+        market_cap_lookup=market_cap_lookup,
         broker_lookup={},
         static_site=False,
         api_base="/api",
