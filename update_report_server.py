@@ -542,6 +542,148 @@ def fetch_financial_statements_html(code: str) -> str:
     )
 
 
+def fetch_business_analysis_html(code: str) -> str:
+    code = "".join(ch for ch in code if ch.isdigit())[:6]
+    if len(code) != 6:
+        raise ValueError("股票代码必须是 6 位数字")
+
+    market_code = eastmoney_market_code(code)
+    url = (
+        "https://emweb.securities.eastmoney.com/PC_HSF10/BusinessAnalysis/PageAjax?"
+        + urllib.parse.urlencode({"code": market_code})
+    )
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": (
+                "https://emweb.securities.eastmoney.com/PC_HSF10/BusinessAnalysis/Index?"
+                + urllib.parse.urlencode({"code": market_code, "type": "web"})
+            ),
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    scope_rows = data.get("zyfw") or []
+    composition_rows = data.get("zygcfx") or []
+    name = next(
+        (
+            row.get("SECURITY_NAME_ABBR")
+            for row in composition_rows
+            if row.get("SECURITY_NAME_ABBR")
+        ),
+        code,
+    )
+    scope = next(
+        (
+            str(row.get("BUSINESS_SCOPE") or "").strip()
+            for row in scope_rows
+            if row.get("BUSINESS_SCOPE")
+        ),
+        "",
+    )
+    if len(scope) > 520:
+        scope = scope[:520].rstrip() + "..."
+
+    latest_date = max((date_label(row) for row in composition_rows if date_label(row)), default="")
+    latest_rows = [row for row in composition_rows if date_label(row) == latest_date]
+    type_names = {"1": "按行业", "2": "按产品", "3": "按地区"}
+
+    def ratio_text(value: object) -> str:
+        value_num = num(value)
+        return f"{value_num * 100:.2f}%" if value_num is not None else "-"
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in latest_rows:
+        item_name = str(row.get("ITEM_NAME") or "").strip()
+        if item_name:
+            grouped.setdefault(str(row.get("MAINOP_TYPE") or "其他"), []).append(row)
+    for rows in grouped.values():
+        rows.sort(key=lambda row: (num(row.get("MBI_RATIO")) or 0, num(row.get("MAIN_BUSINESS_INCOME")) or 0), reverse=True)
+
+    headline_rows = grouped.get("1") or grouped.get("2") or grouped.get("3") or []
+    headline_income_values = [num(row.get("MAIN_BUSINESS_INCOME")) for row in headline_rows]
+    headline_profit_values = [num(row.get("MAIN_BUSINESS_RPOFIT")) for row in headline_rows]
+    headline_income = sum(value for value in headline_income_values if value is not None) if any(value is not None for value in headline_income_values) else None
+    headline_profit = sum(value for value in headline_profit_values if value is not None) if any(value is not None for value in headline_profit_values) else None
+    headline_margin = headline_profit / headline_income * 100 if headline_income not in (None, 0) and headline_profit is not None else None
+    leading_item = headline_rows[0] if headline_rows else {}
+
+    cards = "".join(
+        (
+            '<div class="ba-card">'
+            f'<div class="ba-label">{escape(label)}</div>'
+            f'<div class="ba-value">{escape(value)}</div>'
+            "</div>"
+        )
+        for label, value in [
+            ("主营收入", fmt_yi(headline_income)),
+            ("主营利润", fmt_yi(headline_profit)),
+            ("主营毛利率", f"{headline_margin:.2f}%" if headline_margin is not None else "-"),
+            (
+                "第一大主营",
+                (
+                    f"{leading_item.get('ITEM_NAME')} "
+                    f"{ratio_text(leading_item.get('MBI_RATIO'))}"
+                    if leading_item
+                    else "-"
+                ),
+            ),
+        ]
+    )
+
+    composition_sections: list[str] = []
+    for type_code in ("1", "2", "3"):
+        rows = grouped.get(type_code) or []
+        if not rows:
+            continue
+        table_rows = "".join(
+            "<tr>"
+            f"<td><strong>{escape(str(row.get('ITEM_NAME') or '-'))}</strong>"
+            f"<span class=\"ba-share\"><i style=\"width:{max(0, min(100, (num(row.get('MBI_RATIO')) or 0) * 100)):.2f}%\"></i></span></td>"
+            f"<td>{fmt_yi(row.get('MAIN_BUSINESS_INCOME'))}</td>"
+            f"<td>{ratio_text(row.get('MBI_RATIO'))}</td>"
+            f"<td>{fmt_yi(row.get('MAIN_BUSINESS_COST'))}</td>"
+            f"<td>{fmt_yi(row.get('MAIN_BUSINESS_RPOFIT'))}</td>"
+            f"<td>{ratio_text(row.get('GROSS_RPOFIT_RATIO'))}</td>"
+            "</tr>"
+            for row in rows
+        )
+        composition_sections.append(
+            '<section class="ba-section">'
+            f"<h3>{escape(type_names.get(type_code, '其他构成'))}</h3>"
+            '<div class="ba-table-wrap"><table class="ba-table"><thead><tr>'
+            "<th>主营构成</th><th>主营收入</th><th>营收占比</th><th>主营成本</th><th>主营利润</th><th>毛利率</th>"
+            f"</tr></thead><tbody>{table_rows}</tbody></table></div>"
+            "</section>"
+        )
+
+    scope_html = escape(scope) if scope else "暂无公开主营范围介绍。"
+    compositions_html = "".join(composition_sections) or '<div class="ba-empty">暂无主营构成明细。</div>'
+    return (
+        '<style>'
+        '.business-page{font-family:"Microsoft YaHei",Arial,sans-serif;color:#24292f}'
+        '.business-page h2{margin:0 0 6px;font-size:26px}.ba-sub{color:#57606a;font-size:13px;margin-bottom:16px}'
+        '.ba-intro{border-left:4px solid #0969da;background:#f6f8fa;padding:14px 16px;line-height:1.75;color:#334155}'
+        '.ba-intro strong{display:block;color:#24292f;margin-bottom:5px}.ba-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:14px 0}'
+        '.ba-card{border:1px solid #d8dee4;border-radius:8px;background:#fff;padding:12px}.ba-label{font-size:13px;color:#57606a}.ba-value{margin-top:6px;font-size:18px;font-weight:800}'
+        '.ba-section{margin-top:18px}.ba-section h3{margin:0 0 10px;font-size:18px}.ba-table-wrap{overflow-x:auto;border:1px solid #d8dee4;border-radius:8px}'
+        '.ba-table{width:100%;min-width:760px;border-collapse:collapse;background:#fff}.ba-table th,.ba-table td{padding:10px 12px;border-bottom:1px solid #d8dee4;text-align:right;font-size:13px;white-space:nowrap}.ba-table th{background:#f6f8fa;color:#57606a;font-weight:700}.ba-table th:first-child,.ba-table td:first-child{text-align:left;white-space:normal;min-width:170px}.ba-table tr:last-child td{border-bottom:0}'
+        '.ba-share{display:block;height:5px;margin-top:6px;border-radius:999px;background:#eaeef2;overflow:hidden}.ba-share i{display:block;height:100%;border-radius:inherit;background:#0969da}.ba-empty{color:#57606a;padding:12px 0}.ba-note{margin-top:14px;color:#57606a;font-size:12px;line-height:1.6}'
+        '@media(max-width:720px){.business-page h2{font-size:22px}.ba-table th,.ba-table td{padding:8px 9px}.ba-value{font-size:16px}}'
+        '</style>'
+        '<div class="business-page">'
+        f'<h2>{escape(str(name))} 主营业务分析</h2>'
+        f'<div class="ba-sub">股票代码：{escape(code)}；最新主营构成报告期：{escape(latest_date or "-")}</div>'
+        f'<section class="ba-intro"><strong>公司主营介绍</strong>{scope_html}</section>'
+        f'<div class="ba-cards">{cards}</div>'
+        f'{compositions_html}'
+        '<div class="ba-note">数据来源：东方财富 F10 公司主营构成。金额按亿元展示；占比、毛利率按公司最新披露口径计算或展示，部分公司/报告期可能为空。</div>'
+        '</div>'
+    )
+
+
 def fetch_broker_forecast_html(code: str) -> str:
     code = "".join(ch for ch in code if ch.isdigit())[:6]
     if len(code) != 6:
@@ -635,7 +777,7 @@ class UpdateHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path not in {"/broker", "/financials"}:
+        if parsed.path not in {"/broker", "/financials", "/business"}:
             self.send_json(404, {"ok": False, "error": "Unknown endpoint"})
             return
         query = urllib.parse.parse_qs(parsed.query)
@@ -643,6 +785,8 @@ class UpdateHandler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/broker":
                 html = fetch_broker_forecast_html(code)
+            elif parsed.path == "/business":
+                html = fetch_business_analysis_html(code)
             else:
                 html = fetch_financial_statements_html(code)
             self.send_json(200, {"ok": True, "html": html})

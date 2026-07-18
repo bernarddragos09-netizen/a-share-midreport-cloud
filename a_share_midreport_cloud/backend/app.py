@@ -16,7 +16,11 @@ FETCH_SCRIPT = ROOT / "fetch_2026_midreport_upcoming_sse.py"
 CLOUD_BUILD_SCRIPT = ROOT / "build_cloud_frontend.py"
 
 sys.path.insert(0, str(ROOT))
-from update_report_server import fetch_broker_forecast_html, fetch_financial_statements_html  # noqa: E402
+from update_report_server import (  # noqa: E402
+    fetch_broker_forecast_html,
+    fetch_business_analysis_html,
+    fetch_financial_statements_html,
+)
 
 
 app = FastAPI(title="A Share Midreport API")
@@ -57,6 +61,16 @@ def financials(code: str, response: Response) -> dict[str, object]:
     response.headers["Cache-Control"] = "no-store"
     try:
         html = fetch_financial_statements_html(code)
+        return {"ok": True, "html": html}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/business")
+def business(code: str, response: Response) -> dict[str, object]:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        html = fetch_business_analysis_html(code)
         return {"ok": True, "html": html}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

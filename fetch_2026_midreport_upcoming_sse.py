@@ -1259,6 +1259,10 @@ def write_html_report(
     .financial-button:hover {{ background: #dbeafe; }}
     .financial-button:disabled {{ opacity: .65; cursor: wait; }}
     .financial-content {{ margin-top: 12px; }}
+    .business-button {{ margin-top: 10px; border: 1px solid #0f766e; border-radius: 6px; background: #f0fdfa; color: #0f766e; padding: 7px 12px; cursor: pointer; font-size: 14px; font-weight: 700; }}
+    .business-button:hover {{ background: #ccfbf1; }}
+    .business-button:disabled {{ opacity: .65; cursor: wait; }}
+    .business-content {{ margin-top: 12px; }}
     .tier-legend {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; margin: 0 0 20px; }}
     .tier-item {{ border-radius: 6px; padding: 8px 10px; color: #111827; background: #fff; border: 1px solid #e5e7eb; }}
     .tier-item strong {{ display: block; margin-bottom: 2px; }}
@@ -1669,6 +1673,11 @@ def write_html_report(
             <div class="financial-content">点击按钮后打开第二个子页面：利润表、资产负债表、现金流量表和关键趋势图。</div>
           </section>
           <section class="detail-section">
+            <h3>公司主营与构成分析</h3>
+            <button class="business-button" type="button" data-code="${{escapeHtml(item.code)}}">查看主营构成分析</button>
+            <div class="business-content">点击后查看公司主营介绍，以及按行业、产品、地区披露的收入、成本、利润、毛利率和营收占比。</div>
+          </section>
+          <section class="detail-section">
             <h3>AI总结</h3>
             <div class="detail-ai">${{escapeHtml(item.ai_summary)}}</div>
           </section>
@@ -1758,6 +1767,33 @@ def write_html_report(
         button.disabled = false;
       }}
     }}
+    async function loadBusinessAnalysis(button) {{
+      const code = button.dataset.code;
+      const section = button.closest('.detail-section');
+      const content = section ? section.querySelector('.business-content') : null;
+      if (!code || !content) return;
+      if (isStaticSite) {{
+        content.textContent = '静态版不包含实时主营构成数据，请使用云端版网站查看。';
+        return;
+      }}
+      button.disabled = true;
+      button.textContent = '加载中...';
+      content.textContent = '正在抓取公司主营介绍与构成数据...';
+      try {{
+        const response = await fetch(apiBase + '/business?code=' + encodeURIComponent(code) + '&_=' + Date.now(), {{ cache: 'no-store' }});
+        const data = await response.json();
+        if (!response.ok || !data.ok) {{
+          throw new Error(data.error || data.detail || '抓取失败');
+        }}
+        content.innerHTML = data.html || '暂无公司主营构成数据';
+        button.textContent = '刷新主营构成分析';
+      }} catch (error) {{
+        content.textContent = '无法抓取主营构成数据：' + String(error.message || error);
+        button.textContent = '查看主营构成分析';
+      }} finally {{
+        button.disabled = false;
+      }}
+    }}
     function setSnapshotPeriod(snapshot, nextIndex) {{
       const panels = Array.from(snapshot.querySelectorAll('.fs-snapshot-panel'));
       if (!panels.length) return;
@@ -1790,6 +1826,9 @@ def write_html_report(
       }}
       if (target && target.classList && target.classList.contains('financial-button')) {{
         loadFinancialStatements(target);
+      }}
+      if (target && target.classList && target.classList.contains('business-button')) {{
+        loadBusinessAnalysis(target);
       }}
       if (target && target.classList && target.classList.contains('fs-snapshot-jump')) {{
         const snapshot = target.closest('.fs-balance-snapshot');
