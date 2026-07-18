@@ -665,6 +665,11 @@ def fetch_business_analysis_html(code: str) -> str:
     business_text = f"{product_text} {scope}".lower()
     tracking_rules = [
         (
+            ("集装箱", "航运", "海运", "船舶", "港口"),
+            "航运与港口",
+            ["SCFI、CCFI及欧美主要航线运价", "红海、苏伊士运河、港口拥堵与绕航情况", "新船交付、拆解量和闲置运力", "单箱收入、货运量、装载率和 EBIT 利润率"],
+        ),
+        (
             ("白酒", "啤酒", "酒类", "饮料", "食品", "乳业", "调味"),
             "消费品与渠道",
             ["核心单品批价与终端零售价", "经销商/门店数量及渠道库存", "合同负债、预收款与经营现金流", "销量、吨价和高端产品占比"],
@@ -742,18 +747,83 @@ def fetch_business_analysis_html(code: str) -> str:
                 ["核心产品销量、单价和市场份额", "原材料、人工及制造成本变化", "订单、产能利用率和项目进度", "应收账款、存货和经营现金流"],
             )
         ]
+    tracking_schedule = {
+        "航运与港口": (
+            ["SCFI、CCFI及欧美主要航线运价", "红海、苏伊士运河、港口拥堵与绕航情况", "新船交付、拆解量和闲置运力"],
+            ["单箱收入", "货运量与运力增速、装载率", "EBIT 利润率、经营现金流、分红和资本开支"],
+        ),
+        "消费品与渠道": (
+            ["核心单品批价、终端零售价和渠道库存", "经销商动销、门店数量和促销节奏", "竞品价格及消费景气变化"],
+            ["销量、吨价和高端产品占比", "分产品毛利率、销售费用率和合同负债", "经营现金流、库存周转和渠道回款"],
+        ),
+        "科技与电子": (
+            ["行业价格、下游资本开支和订单景气", "产能利用率、交期和核心产品出货", "关键零部件和存储/芯片价格"],
+            ["收入增速、ASP、毛利率和客户集中度", "存货、应收账款和周转天数", "研发投入、新品进展和资本开支"],
+        ),
+        "汽车、新能源与电力": (
+            ["终端销量、装机量和渗透率", "锂电材料/组件价格及价格战变化", "订单、排产和出口数据"],
+            ["出货量、单价、单位成本和毛利率", "产能利用率、扩产进度和资本开支", "经营现金流、库存和应收账款"],
+        ),
+        "资源、材料与化工": (
+            ["主要产品、原材料和能源价格", "产品价差、开工率和社会库存", "检修、投产与行业供给变化"],
+            ["销量、售价、单位成本和毛利率", "库存、应收账款和经营现金流", "新增产能、资本开支和项目回报"],
+        ),
+        "金融业务": (
+            ["市场成交额、两融余额和风险偏好", "基金申赎、客户资产流入和利率变化", "监管政策与资本市场制度变化"],
+            ["资产管理规模、利息/手续费收入和费率", "信用减值、资产质量和资本充足率", "ROE、分红能力和资本补充安排"],
+        ),
+        "医药健康": (
+            ["终端销售、招标挂网和集采价格", "临床试验、审批与新产品上市进度", "医保、集采和行业监管政策"],
+            ["核心产品收入、毛利率和市场份额", "研发费用率、销售费用率和研发管线", "应收账款、库存和经营现金流"],
+        ),
+        "地产与基建": (
+            ["合同销售/新签订单和开工数据", "土地、融资政策和信用利差", "回款、竣工与地方投资进度"],
+            ["收入确认、在手订单和毛利率", "合同资产、应收账款和经营现金流", "有息负债、到期债务和资本开支"],
+        ),
+        "交通运输": (
+            ["运量、票价/运价和燃油成本", "航线、运力投放与客座率", "跨境贸易和宏观需求变化"],
+            ["货运量/客运量、单位收入和装载率", "毛利率、经营现金流和租赁负债", "运力扩张、资本开支和分红"],
+        ),
+        "公用事业": (
+            ["电力负荷、燃料价格、来水量和天气", "上网电价、现货电价和供需变化", "装机投产与限电情况"],
+            ["发电量、利用小时和单位成本", "电价、毛利率和经营现金流", "资本开支、负债率和分红覆盖"],
+        ),
+        "农林牧渔": (
+            ["农产品、畜禽和饲料原料价格", "存栏、出栏和疫病信息", "天气、政策补贴和进口数据"],
+            ["销量、单价、单位养殖成本和毛利率", "存货、生物资产和经营现金流", "产能扩张、资本开支和负债"],
+        ),
+        "国防军工": (
+            ["行业订单、装备采购和预算信息", "供应链保障、原材料和交付节奏", "军工改革和政策催化"],
+            ["在手订单、收入确认和毛利率", "存货、预收款、应收账款与回款", "产能建设、资本开支和经营现金流"],
+        ),
+        "传媒文娱": (
+            ["用户活跃、流水/票房和内容上线排期", "广告景气、获客成本和竞品表现", "监管、版号和平台政策"],
+            ["用户付费率、ARPU、收入和毛利率", "销售费用率、递延收入和现金回款", "内容投入、资本开支和经营现金流"],
+        ),
+        "主营经营效率": (
+            ["核心产品价格、销量和行业景气", "订单、产能利用率和原材料成本", "主要政策、供需和竞争格局变化"],
+            ["分业务收入、毛利率和市场份额", "存货、应收账款和经营现金流", "资本开支、负债和分红覆盖"],
+        ),
+    }
     watch_cards = [
         (
             "主营结构变化",
-            ["各业务收入占比与同比增速", "分业务毛利率和第一大业务集中度", "产品/地区结构的季度变化", "主营利润与归母净利润匹配度"],
+            ["核心产品价格、销量及渠道/订单高频变化", "行业供需、竞争格局和政策变化"],
+            ["各业务收入占比与同比增速", "分业务毛利率和第一大业务集中度", "主营利润与归母净利润匹配度"],
         )
-    ] + [(title, items) for _, title, items in matched_rules]
+    ] + [
+        (title, *tracking_schedule.get(title, (items[:2], items[2:])))
+        for _, title, items in matched_rules
+    ]
     watch_html = "".join(
         '<article class="ba-watch-card">'
         f"<h4>{escape(title)}</h4>"
-        f"<ul>{''.join(f'<li>{escape(item)}</li>' for item in items)}</ul>"
+        '<div class="ba-watch-frequency"><strong>每周看</strong>'
+        f"<ul>{''.join(f'<li>{escape(item)}</li>' for item in weekly_items)}</ul></div>"
+        '<div class="ba-watch-frequency"><strong>每季度看</strong>'
+        f"<ul>{''.join(f'<li>{escape(item)}</li>' for item in quarterly_items)}</ul></div>"
         "</article>"
-        for title, items in watch_cards
+        for title, weekly_items, quarterly_items in watch_cards
     )
     return (
         '<style>'
@@ -765,7 +835,7 @@ def fetch_business_analysis_html(code: str) -> str:
         '.ba-section{margin-top:18px}.ba-section h3{margin:0 0 10px;font-size:18px}.ba-table-wrap{overflow-x:auto;border:1px solid #d8dee4;border-radius:8px}'
         '.ba-table{width:100%;min-width:760px;border-collapse:collapse;background:#fff}.ba-table th,.ba-table td{padding:10px 12px;border-bottom:1px solid #d8dee4;text-align:right;font-size:13px;white-space:nowrap}.ba-table th{background:#f6f8fa;color:#57606a;font-weight:700}.ba-table th:first-child,.ba-table td:first-child{text-align:left;white-space:normal;min-width:170px}.ba-table tr:last-child td{border-bottom:0}'
         '.ba-share{display:block;height:5px;margin-top:6px;border-radius:999px;background:#eaeef2;overflow:hidden}.ba-share i{display:block;height:100%;border-radius:inherit;background:#0969da}.ba-empty{color:#57606a;padding:12px 0}.ba-note{margin-top:14px;color:#57606a;font-size:12px;line-height:1.6}'
-        '.ba-watch{margin-top:20px;border-top:1px solid #d8dee4;padding-top:18px}.ba-watch h3{margin:0 0 5px;font-size:18px}.ba-watch-sub{margin:0 0 12px;color:#57606a;font-size:13px;line-height:1.55}.ba-watch-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.ba-watch-card{border:1px solid #d8dee4;border-top:3px solid #0f766e;border-radius:8px;background:#f8fafc;padding:12px}.ba-watch-card h4{margin:0 0 8px;color:#0f766e;font-size:15px}.ba-watch-card ul{margin:0;padding-left:18px;color:#334155;font-size:13px;line-height:1.7}'
+        '.ba-watch{margin-top:20px;border-top:1px solid #d8dee4;padding-top:18px}.ba-watch h3{margin:0 0 5px;font-size:18px}.ba-watch-sub{margin:0 0 12px;color:#57606a;font-size:13px;line-height:1.55}.ba-watch-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px}.ba-watch-card{border:1px solid #d8dee4;border-top:3px solid #0f766e;border-radius:8px;background:#f8fafc;padding:12px}.ba-watch-card h4{margin:0 0 10px;color:#0f766e;font-size:15px}.ba-watch-frequency{padding-top:10px;margin-top:10px;border-top:1px solid #d8dee4}.ba-watch-frequency:first-of-type{padding-top:0;margin-top:0;border-top:0}.ba-watch-frequency strong{color:#57606a;font-size:13px}.ba-watch-card ul{margin:4px 0 0;padding-left:18px;color:#334155;font-size:13px;line-height:1.7}'
         '@media(max-width:720px){.business-page h2{font-size:22px}.ba-table th,.ba-table td{padding:8px 9px}.ba-value{font-size:16px}}'
         '</style>'
         '<div class="business-page">'
@@ -774,7 +844,7 @@ def fetch_business_analysis_html(code: str) -> str:
         f'<section class="ba-intro"><strong>公司主营介绍</strong>{scope_html}</section>'
         f'<div class="ba-cards">{cards}</div>'
         f'{compositions_html}'
-        '<section class="ba-watch"><h3>建议跟踪的数据</h3><p class="ba-watch-sub">根据公司主营范围和最新主营构成自动匹配，用于建立后续经营跟踪清单。</p>'
+        '<section class="ba-watch"><h3>最实用的跟踪顺序</h3><p class="ba-watch-sub">先用每周数据观察景气、价格与供需，再在季报期复核量、价、成本、利润和现金流。</p>'
         f'<div class="ba-watch-grid">{watch_html}</div></section>'
         '<div class="ba-note">数据来源：东方财富 F10 公司主营构成。金额按亿元展示；占比、毛利率按公司最新披露口径计算或展示，部分公司/报告期可能为空。</div>'
         '</div>'
