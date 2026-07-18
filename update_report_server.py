@@ -805,6 +805,118 @@ def fetch_business_analysis_html(code: str) -> str:
             ["分业务收入、毛利率和市场份额", "存货、应收账款和经营现金流", "资本开支、负债和分红覆盖"],
         ),
     }
+    concrete_trackers: dict[str, list[tuple[str, str, str, str]]] = {
+        "航运与港口": [
+            ("每周", "SCFI 综合指数及上海-欧洲、地中海、美西、美东分航线", "上海航运交易所", "看连续 4 周环比、航线分化和现货运价拐点"),
+            ("每周", "CCFI 综合指数及分航线", "上海航运交易所", "看长协运价与现货运价的背离"),
+            ("每周", "红海/苏伊士通行量、绕航比例、主要港口拥堵", "Suez Canal Authority、UNCTAD PortWatch、船司公告", "判断有效运力损失是否变化"),
+            ("每月", "集装箱新船交付、拆解、订单簿和闲置运力", "Alphaliner、Linerlytica、Clarksons", "判断未来 12-24 个月供给压力"),
+            ("每季度", "单箱收入、货运量、运力增速和装载率", "公司季报/业绩说明会", "验证运价是否真正转化为收入"),
+            ("每季度", "EBIT 利润率、经营现金流和自由现金流", "公司季报/现金流量表", "验证利润质量及现金回收"),
+            ("每季度", "分红、资本开支、新船订单与租船承诺", "公司公告/季报", "判断股东回报与扩张节奏"),
+        ],
+        "消费品与渠道": [
+            ("每周", "核心单品批价、终端零售价和渠道库存", "行业报价平台、经销商调研、公司渠道信息", "看价格是否稳住以及渠道是否去库"),
+            ("每周", "竞品促销、终端动销和渠道政策", "电商平台、渠道调研、公司公告", "判断竞争是否侵蚀核心单品"),
+            ("每季度", "销量、吨价、分产品收入和毛利率", "公司季报/业绩说明会", "拆解收入增速来自量还是价"),
+            ("每季度", "合同负债、存货、经营现金流和销售费用率", "公司季报/现金流量表", "判断渠道压货和回款质量"),
+        ],
+        "科技与电子": [
+            ("每周", "DRAM、NAND、面板、芯片等对应产品报价", "TrendForce、DRAMeXchange、行业报价机构", "看价格拐点和供需紧张程度"),
+            ("每月", "下游手机、PC、服务器、汽车等出货和库存", "IDC、Canalys、信通院、行业协会", "判断终端需求和补库周期"),
+            ("每季度", "产品 ASP、出货量、产能利用率和毛利率", "公司季报/业绩说明会", "验证景气是否传导至利润"),
+            ("每季度", "存货、应收账款、研发费用和资本开支", "公司季报/现金流量表", "防范库存积压与过度扩产"),
+        ],
+        "汽车、新能源与电力": [
+            ("每周", "新能源车零售、上险、排产和核心材料价格", "乘联会、交强险数据、SMM、百川盈孚", "看终端需求、去库和价格竞争"),
+            ("每周", "光伏组件、电池片、硅料或锂盐等价格", "Infolink、SMM、行业协会", "判断产业链价差变化"),
+            ("每季度", "销量/出货量、ASP、单位成本和毛利率", "公司季报/业绩说明会", "拆解盈利来自规模还是降本"),
+            ("每季度", "产能利用率、扩产进度、库存、经营现金流", "公司季报/公告", "评估供给压力与资本开支回报"),
+        ],
+        "资源、材料与化工": [
+            ("每周", "主产品、原料和能源价格", "生意社、卓创资讯、百川盈孚、SMM", "直接跟踪产品价差而非只看收入"),
+            ("每周", "开工率、社会库存、检修与投产", "卓创资讯、百川盈孚、行业协会", "判断供需边际变化"),
+            ("每季度", "销量、售价、单位成本和分产品毛利率", "公司季报/业绩说明会", "验证价差向利润表的传导"),
+            ("每季度", "存货、应收账款、现金流和资本开支", "公司季报/现金流量表", "防范价格下行时的存货与扩产风险"),
+        ],
+        "金融业务": [
+            ("每周", "两市成交额、两融余额、基金申赎和利率曲线", "上交所、深交所、中证登、基金业协会", "判断经纪、自营、资管业务景气"),
+            ("每月", "新发基金、客户资产流入和市场风险偏好", "基金业协会、公司月度经营数据", "判断资产管理规模变化"),
+            ("每季度", "AUM、手续费收入、利息净收入和费率", "公司季报/业绩说明会", "拆解收入增长的可持续性"),
+            ("每季度", "信用减值、资产质量、资本充足率和 ROE", "公司季报/监管披露", "判断风险暴露和资本约束"),
+        ],
+        "医药健康": [
+            ("每周", "药品招标挂网、集采结果、医保目录和审批进度", "国家医保局、NMPA、CDE、省级采购平台", "判断价格、放量和政策风险"),
+            ("每月", "重点产品终端销售和医院覆盖", "米内网、样本医院数据、公司披露", "判断处方/院内产品实际放量"),
+            ("每季度", "核心产品收入、毛利率、销售费用率和研发费用率", "公司季报/业绩说明会", "验证放量是否带来经营杠杆"),
+            ("每季度", "临床管线、获批节点、应收账款和现金消耗", "公司公告/季报", "评估创新兑现和现金安全边际"),
+        ],
+        "地产与基建": [
+            ("每周", "合同销售、新签订单、土地和融资政策", "中指研究院、克而瑞、公司公告、政府部门", "判断需求与订单趋势"),
+            ("每月", "房地产投资、开工、竣工和基建投资", "国家统计局", "判断行业总量景气"),
+            ("每季度", "收入确认、在手订单、毛利率和回款", "公司季报/业绩说明会", "验证订单向收入和现金的转化"),
+            ("每季度", "合同资产、应收账款、有息负债和到期债务", "公司季报/债券公告", "评估回款与杠杆风险"),
+        ],
+        "交通运输": [
+            ("每周", "运量、票价/运价、燃油价格和运力投放", "行业协会、航司/港口数据、能源报价", "判断需求、价格和成本的同步变化"),
+            ("每月", "跨境贸易、旅客量、快递件量或港口吞吐量", "海关总署、民航局、国家邮政局、港口公告", "确认高频景气是否延续"),
+            ("每季度", "单位收入、装载率、毛利率和经营现金流", "公司季报/业绩说明会", "验证规模增长的盈利质量"),
+            ("每季度", "运力扩张、租赁负债、资本开支和分红", "公司季报/公告", "判断扩张是否透支自由现金流"),
+        ],
+        "公用事业": [
+            ("每周", "电力负荷、燃料价格、来水量和天气", "国家能源局、煤炭报价、气象水文部门", "判断发电量与成本变化"),
+            ("每月", "全社会用电量、装机、利用小时和电价政策", "国家能源局、中电联、发改委", "判断行业供需和价格机制"),
+            ("每季度", "发电量、上网电价、单位成本和毛利率", "公司季报/业绩说明会", "拆解量价成本对利润的影响"),
+            ("每季度", "资本开支、负债率、自由现金流和分红", "公司季报/现金流量表", "评估高资本开支后的回报"),
+        ],
+        "农林牧渔": [
+            ("每周", "生猪、禽类、饲料和农产品价格", "农业农村部、卓创资讯、海关总署", "判断养殖盈利和成本变化"),
+            ("每月", "能繁母猪、存栏、出栏和进口数据", "农业农村部、海关总署", "判断供给周期位置"),
+            ("每季度", "销量、单价、单位成本、生物资产和毛利率", "公司季报/业绩说明会", "验证价格是否传导至利润"),
+            ("每季度", "存货、经营现金流、资本开支和负债", "公司季报/现金流量表", "防范逆周期扩张风险"),
+        ],
+        "国防军工": [
+            ("每周", "装备采购、行业订单、政策和供应链事件", "政府部门、公司公告、行业资讯", "判断订单预期与交付扰动"),
+            ("每月", "军工集团资产整合、改革和招投标信息", "国资委、集团公告、交易所披露", "跟踪资产注入与订单催化"),
+            ("每季度", "在手订单、收入确认、毛利率和预收款", "公司季报/业绩说明会", "验证订单落地与交付节奏"),
+            ("每季度", "存货、应收账款、回款和资本开支", "公司季报/现金流量表", "判断军品回款和利润质量"),
+        ],
+        "传媒文娱": [
+            ("每周", "用户活跃、游戏流水、票房和内容排期", "QuestMobile、DataEye、猫眼专业版、公司公告", "判断内容热度和变现强度"),
+            ("每月", "广告市场、短视频/长视频时长和付费用户", "CTR、QuestMobile、平台披露", "判断广告与订阅景气"),
+            ("每季度", "付费率、ARPU、收入、毛利率和销售费用率", "公司季报/业绩说明会", "验证流量是否转化为利润"),
+            ("每季度", "递延收入、内容投入、现金回款和资本开支", "公司季报/现金流量表", "评估内容投资回报"),
+        ],
+        "主营经营效率": [
+            ("每周", "核心产品价格、行业供需和订单变化", "行业协会、公司公告、公开报价", "先判断景气方向是否改善"),
+            ("每月", "产量、销量、库存和下游需求数据", "国家统计局、行业协会、海关总署", "确认高频信号是否持续"),
+            ("每季度", "分业务收入、毛利率、存货和应收账款", "公司季报/业绩说明会", "验证主营增长的质量"),
+            ("每季度", "经营现金流、资本开支、负债和分红", "公司季报/现金流量表", "评估现金回报和风险"),
+        ],
+    }
+    if "茅台" in business_text:
+        concrete_trackers["消费品与渠道"] = [
+            ("每周", "53 度飞天茅台 500ml 整箱/散瓶批价", "今日酒价、渠道报价", "看批价是否连续下行或渠道价差收窄"),
+            ("每周", "i 茅台投放、经销商库存和终端动销", "i 茅台、渠道调研、公司公开信息", "判断供给投放与实际需求"),
+            ("每季度", "茅台酒/系列酒收入、销量、吨价和毛利率", "贵州茅台季报/业绩说明会", "拆解增长来自量、价还是结构升级"),
+            ("每季度", "合同负债、预收款、经营现金流和分红", "贵州茅台季报/现金流量表", "验证渠道回款、现金质量和股东回报"),
+        ]
+    selected_title = matched_rules[0][1]
+    concrete_rows = concrete_trackers.get(selected_title, concrete_trackers["主营经营效率"])
+    concrete_table_rows = "".join(
+        "<tr>"
+        f"<td>{escape(frequency)}</td><td><strong>{escape(metric)}</strong></td>"
+        f"<td>{escape(source)}</td><td>{escape(focus)}</td>"
+        "</tr>"
+        for frequency, metric, source, focus in concrete_rows
+    )
+    concrete_tracker_html = (
+        '<section class="ba-tracker">'
+        f"<h4>{escape(selected_title)}：可执行指标清单</h4>"
+        '<div class="ba-tracker-wrap"><table class="ba-tracker-table"><thead><tr>'
+        "<th>频率</th><th>具体指标</th><th>去哪里看</th><th>重点判断</th>"
+        f"</tr></thead><tbody>{concrete_table_rows}</tbody></table></div></section>"
+    )
     watch_cards = [
         (
             "主营结构变化",
@@ -835,7 +947,7 @@ def fetch_business_analysis_html(code: str) -> str:
         '.ba-section{margin-top:18px}.ba-section h3{margin:0 0 10px;font-size:18px}.ba-table-wrap{overflow-x:auto;border:1px solid #d8dee4;border-radius:8px}'
         '.ba-table{width:100%;min-width:760px;border-collapse:collapse;background:#fff}.ba-table th,.ba-table td{padding:10px 12px;border-bottom:1px solid #d8dee4;text-align:right;font-size:13px;white-space:nowrap}.ba-table th{background:#f6f8fa;color:#57606a;font-weight:700}.ba-table th:first-child,.ba-table td:first-child{text-align:left;white-space:normal;min-width:170px}.ba-table tr:last-child td{border-bottom:0}'
         '.ba-share{display:block;height:5px;margin-top:6px;border-radius:999px;background:#eaeef2;overflow:hidden}.ba-share i{display:block;height:100%;border-radius:inherit;background:#0969da}.ba-empty{color:#57606a;padding:12px 0}.ba-note{margin-top:14px;color:#57606a;font-size:12px;line-height:1.6}'
-        '.ba-watch{margin-top:20px;border-top:1px solid #d8dee4;padding-top:18px}.ba-watch h3{margin:0 0 5px;font-size:18px}.ba-watch-sub{margin:0 0 12px;color:#57606a;font-size:13px;line-height:1.55}.ba-watch-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px}.ba-watch-card{border:1px solid #d8dee4;border-top:3px solid #0f766e;border-radius:8px;background:#f8fafc;padding:12px}.ba-watch-card h4{margin:0 0 10px;color:#0f766e;font-size:15px}.ba-watch-frequency{padding-top:10px;margin-top:10px;border-top:1px solid #d8dee4}.ba-watch-frequency:first-of-type{padding-top:0;margin-top:0;border-top:0}.ba-watch-frequency strong{color:#57606a;font-size:13px}.ba-watch-card ul{margin:4px 0 0;padding-left:18px;color:#334155;font-size:13px;line-height:1.7}'
+        '.ba-watch{margin-top:20px;border-top:1px solid #d8dee4;padding-top:18px}.ba-watch h3{margin:0 0 5px;font-size:18px}.ba-watch-sub{margin:0 0 12px;color:#57606a;font-size:13px;line-height:1.55}.ba-tracker{margin:14px 0 12px}.ba-tracker h4{margin:0 0 10px;font-size:16px;color:#0f766e}.ba-tracker-wrap{overflow-x:auto;border:1px solid #d8dee4;border-radius:8px}.ba-tracker-table{width:100%;min-width:860px;border-collapse:collapse;background:#fff}.ba-tracker-table th,.ba-tracker-table td{padding:10px 11px;border-bottom:1px solid #d8dee4;text-align:left;vertical-align:top;font-size:13px;line-height:1.55}.ba-tracker-table th{background:#f0fdfa;color:#0f766e;font-weight:800;white-space:nowrap}.ba-tracker-table td:first-child{font-weight:800;white-space:nowrap;color:#0969da}.ba-tracker-table tr:last-child td{border-bottom:0}.ba-watch-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px}.ba-watch-card{border:1px solid #d8dee4;border-top:3px solid #0f766e;border-radius:8px;background:#f8fafc;padding:12px}.ba-watch-card h4{margin:0 0 10px;color:#0f766e;font-size:15px}.ba-watch-frequency{padding-top:10px;margin-top:10px;border-top:1px solid #d8dee4}.ba-watch-frequency:first-of-type{padding-top:0;margin-top:0;border-top:0}.ba-watch-frequency strong{color:#57606a;font-size:13px}.ba-watch-card ul{margin:4px 0 0;padding-left:18px;color:#334155;font-size:13px;line-height:1.7}'
         '@media(max-width:720px){.business-page h2{font-size:22px}.ba-table th,.ba-table td{padding:8px 9px}.ba-value{font-size:16px}}'
         '</style>'
         '<div class="business-page">'
@@ -845,6 +957,7 @@ def fetch_business_analysis_html(code: str) -> str:
         f'<div class="ba-cards">{cards}</div>'
         f'{compositions_html}'
         '<section class="ba-watch"><h3>最实用的跟踪顺序</h3><p class="ba-watch-sub">先用每周数据观察景气、价格与供需，再在季报期复核量、价、成本、利润和现金流。</p>'
+        f'{concrete_tracker_html}'
         f'<div class="ba-watch-grid">{watch_html}</div></section>'
         '<div class="ba-note">数据来源：东方财富 F10 公司主营构成。金额按亿元展示；占比、毛利率按公司最新披露口径计算或展示，部分公司/报告期可能为空。</div>'
         '</div>'
