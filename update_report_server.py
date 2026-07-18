@@ -661,6 +661,100 @@ def fetch_business_analysis_html(code: str) -> str:
 
     scope_html = escape(scope) if scope else "暂无公开主营范围介绍。"
     compositions_html = "".join(composition_sections) or '<div class="ba-empty">暂无主营构成明细。</div>'
+    product_text = " ".join(str(row.get("ITEM_NAME") or "") for row in latest_rows).lower()
+    business_text = f"{product_text} {scope}".lower()
+    tracking_rules = [
+        (
+            ("白酒", "啤酒", "酒类", "饮料", "食品", "乳业", "调味"),
+            "消费品与渠道",
+            ["核心单品批价与终端零售价", "经销商/门店数量及渠道库存", "合同负债、预收款与经营现金流", "销量、吨价和高端产品占比"],
+        ),
+        (
+            ("半导体", "芯片", "集成电路", "软件", "人工智能", "云", "通信", "电子"),
+            "科技与电子",
+            ["下游客户资本开支与订单能见度", "产能利用率、产品价格与出货量", "存货、应收账款和周转天数", "研发投入、研发人员及新品进度"],
+        ),
+        (
+            ("汽车", "电池", "新能源", "光伏", "风电", "充电", "储能"),
+            "汽车、新能源与电力",
+            ["终端销量、装机量和渗透率", "核心材料价格及单位成本", "在手订单、产能利用率和扩产进度", "补贴、出口和价格竞争变化"],
+        ),
+        (
+            ("化工", "石化", "塑料", "树脂", "金属", "钢", "煤", "矿"),
+            "资源、材料与化工",
+            ["主要产品价格、价差和开工率", "原材料及能源成本变化", "库存、应收账款和下游需求", "新增产能、检修与项目投产节奏"],
+        ),
+        (
+            ("银行", "证券", "基金", "保险", "信托", "金融"),
+            "金融业务",
+            ["资产管理规模和客户资产净流入", "利息净收入/手续费收入及费率", "信用减值、资产质量和资本充足率", "市场成交额、风险偏好与政策变化"],
+        ),
+        (
+            ("医药", "医疗", "药品", "生物", "器械", "医院"),
+            "医药健康",
+            ["核心产品销量、终端价格和市场份额", "研发管线、临床进展和获批节奏", "集采、医保和监管政策影响", "销售费用率与应收账款回款"],
+        ),
+        (
+            ("地产", "房地产", "建筑", "工程", "基建", "水泥"),
+            "地产与基建",
+            ["新签订单/合同销售和在手订单", "回款、应收账款和合同资产", "有息负债、到期债务和融资成本", "开工率、投资强度和政策支持"],
+        ),
+        (
+            ("运输", "物流", "港口", "航空", "快递", "航运"),
+            "交通运输",
+            ["运量、客座率和货运量", "运价/票价与燃油成本", "运力投放、船舶/车辆利用率", "跨境贸易和宏观需求变化"],
+        ),
+        (
+            ("电力", "燃气", "供水", "环保", "公用"),
+            "公用事业",
+            ["发电量、利用小时和上网电价", "燃料成本、来水量和供需格局", "装机投产与资本开支", "应收补贴、电费回款和现金流"],
+        ),
+        (
+            ("农业", "种业", "养殖", "饲料", "渔业", "牧", "猪", "禽"),
+            "农林牧渔",
+            ["农产品/畜禽价格与供需周期", "出栏量、存栏量和单位养殖成本", "饲料原料价格和疫病风险", "库存、现金流和政策补贴"],
+        ),
+        (
+            ("军工", "航空航天", "导弹", "船舶", "国防"),
+            "国防军工",
+            ["订单合同、交付节奏和预收款", "产能建设、供应链保障和存货", "军品定价与客户预算安排", "应收账款、回款周期和现金流"],
+        ),
+        (
+            ("游戏", "影视", "传媒", "广告", "出版", "娱乐"),
+            "传媒文娱",
+            ["用户数、活跃度和付费率", "内容上线排期、票房/流水和爆款表现", "获客成本、广告景气和变现效率", "递延收入、合同负债和现金回款"],
+        ),
+    ]
+    rule_scores = []
+    for index, rule in enumerate(tracking_rules):
+        keywords = rule[0]
+        score = sum(3 for keyword in keywords if keyword in product_text) + sum(
+            1 for keyword in keywords if keyword in scope.lower()
+        )
+        if score:
+            rule_scores.append((score, index, rule))
+    matched_rules = [rule for _, _, rule in sorted(rule_scores, key=lambda item: (-item[0], item[1]))[:1]]
+    if not matched_rules:
+        matched_rules = [
+            (
+                (),
+                "主营经营效率",
+                ["核心产品销量、单价和市场份额", "原材料、人工及制造成本变化", "订单、产能利用率和项目进度", "应收账款、存货和经营现金流"],
+            )
+        ]
+    watch_cards = [
+        (
+            "主营结构变化",
+            ["各业务收入占比与同比增速", "分业务毛利率和第一大业务集中度", "产品/地区结构的季度变化", "主营利润与归母净利润匹配度"],
+        )
+    ] + [(title, items) for _, title, items in matched_rules]
+    watch_html = "".join(
+        '<article class="ba-watch-card">'
+        f"<h4>{escape(title)}</h4>"
+        f"<ul>{''.join(f'<li>{escape(item)}</li>' for item in items)}</ul>"
+        "</article>"
+        for title, items in watch_cards
+    )
     return (
         '<style>'
         '.business-page{font-family:"Microsoft YaHei",Arial,sans-serif;color:#24292f}'
@@ -671,6 +765,7 @@ def fetch_business_analysis_html(code: str) -> str:
         '.ba-section{margin-top:18px}.ba-section h3{margin:0 0 10px;font-size:18px}.ba-table-wrap{overflow-x:auto;border:1px solid #d8dee4;border-radius:8px}'
         '.ba-table{width:100%;min-width:760px;border-collapse:collapse;background:#fff}.ba-table th,.ba-table td{padding:10px 12px;border-bottom:1px solid #d8dee4;text-align:right;font-size:13px;white-space:nowrap}.ba-table th{background:#f6f8fa;color:#57606a;font-weight:700}.ba-table th:first-child,.ba-table td:first-child{text-align:left;white-space:normal;min-width:170px}.ba-table tr:last-child td{border-bottom:0}'
         '.ba-share{display:block;height:5px;margin-top:6px;border-radius:999px;background:#eaeef2;overflow:hidden}.ba-share i{display:block;height:100%;border-radius:inherit;background:#0969da}.ba-empty{color:#57606a;padding:12px 0}.ba-note{margin-top:14px;color:#57606a;font-size:12px;line-height:1.6}'
+        '.ba-watch{margin-top:20px;border-top:1px solid #d8dee4;padding-top:18px}.ba-watch h3{margin:0 0 5px;font-size:18px}.ba-watch-sub{margin:0 0 12px;color:#57606a;font-size:13px;line-height:1.55}.ba-watch-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.ba-watch-card{border:1px solid #d8dee4;border-top:3px solid #0f766e;border-radius:8px;background:#f8fafc;padding:12px}.ba-watch-card h4{margin:0 0 8px;color:#0f766e;font-size:15px}.ba-watch-card ul{margin:0;padding-left:18px;color:#334155;font-size:13px;line-height:1.7}'
         '@media(max-width:720px){.business-page h2{font-size:22px}.ba-table th,.ba-table td{padding:8px 9px}.ba-value{font-size:16px}}'
         '</style>'
         '<div class="business-page">'
@@ -679,6 +774,8 @@ def fetch_business_analysis_html(code: str) -> str:
         f'<section class="ba-intro"><strong>公司主营介绍</strong>{scope_html}</section>'
         f'<div class="ba-cards">{cards}</div>'
         f'{compositions_html}'
+        '<section class="ba-watch"><h3>建议跟踪的数据</h3><p class="ba-watch-sub">根据公司主营范围和最新主营构成自动匹配，用于建立后续经营跟踪清单。</p>'
+        f'<div class="ba-watch-grid">{watch_html}</div></section>'
         '<div class="ba-note">数据来源：东方财富 F10 公司主营构成。金额按亿元展示；占比、毛利率按公司最新披露口径计算或展示，部分公司/报告期可能为空。</div>'
         '</div>'
     )
