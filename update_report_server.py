@@ -347,50 +347,6 @@ def fetch_szse_financial_report_links(code: str, wanted_dates: set[str]) -> dict
     )
 
 
-def fetch_eastmoney_financial_report_links(code: str, wanted_dates: set[str]) -> dict[str, dict[str, str]]:
-    links: dict[str, dict[str, str]] = {}
-
-    for page_index in range(1, 7):
-        params = {
-            "sr": "-1",
-            "page_size": "100",
-            "page_index": str(page_index),
-            "ann_type": "A",
-            "client_source": "web",
-            "stock_list": code,
-        }
-        url = "https://np-anotice-stock.eastmoney.com/api/security/ann?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://data.eastmoney.com/"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            break
-
-        notices = (payload.get("data") or {}).get("list") or []
-        if not notices:
-            break
-        links.update(
-            match_financial_report_notices(
-                wanted_dates - set(links),
-                notices,
-                "公告备份",
-                "title",
-                lambda notice: (
-                    f"https://data.eastmoney.com/notices/detail/{code}/{notice.get('art_code')}.html"
-                    if notice.get("art_code")
-                    else ""
-                ),
-            )
-        )
-        if len(links) == len(wanted_dates):
-            break
-    return links
-
-
 def fetch_financial_report_links(code: str, report_dates: list[str]) -> dict[str, dict[str, str]]:
     wanted_dates = {value for value in report_dates if value}
     if not wanted_dates:
@@ -399,18 +355,35 @@ def fetch_financial_report_links(code: str, report_dates: list[str]) -> dict[str
     if cache_key in FINANCIAL_REPORT_LINK_CACHE:
         return FINANCIAL_REPORT_LINK_CACHE[cache_key]
 
+    is_sse = code.startswith(("6", "9"))
+    source = "上交所" if is_sse else "深交所"
     links: dict[str, dict[str, str]] = {}
-    try:
-        if code.startswith(("6", "9")):
-            links.update(fetch_sse_financial_report_links(code, wanted_dates))
-        else:
-            links.update(fetch_szse_financial_report_links(code, wanted_dates))
-    except Exception:
-        pass
+    for _ in range(2):
+        try:
+            official_links = (
+                fetch_sse_financial_report_links(code, wanted_dates)
+                if is_sse
+                else fetch_szse_financial_report_links(code, wanted_dates)
+            )
+            links.update(official_links)
+            break
+        except Exception:
+            continue
 
     missing_dates = wanted_dates - set(links)
-    if missing_dates:
-        links.update(fetch_eastmoney_financial_report_links(code, missing_dates))
+    search_url = (
+        "https://www.sse.com.cn/assortment/stock/list/info/announcement/index.shtml?"
+        + urllib.parse.urlencode({"productId": code})
+        if is_sse
+        else "https://www.szse.cn/disclosure/listed/fixed/index.html?" + urllib.parse.urlencode({"stock": code})
+    )
+    for report_date in missing_dates:
+        links[report_date] = {
+            "title": report_period_title(report_date),
+            "url": search_url,
+            "source": source,
+            "is_search": "true",
+        }
     FINANCIAL_REPORT_LINK_CACHE[cache_key] = links
     return links
 
@@ -482,12 +455,18 @@ def balance_snapshot_chart(
         report_link = report_links.get(report_date) or {}
         if report_link.get("url"):
             source = report_link.get("source") or "公告原文"
+            link_title = report_link.get("title") or report_period_title(report_date)
+            link_text = (
+                f"在{source}检索{link_title}"
+                if report_link.get("is_search") == "true"
+                else f"查看{link_title}原文"
+            )
             report_link_html = (
                 '<div class="fs-report-link">'
                 '<span>对应财报：</span>'
                 f'<span class="fs-report-source">{escape(source)}</span>'
                 f'<a href="{escape(report_link["url"], quote=True)}" target="_blank" rel="noopener noreferrer">'
-                f'查看{escape(report_link.get("title") or report_period_title(report_date))}原文</a>'
+                f'{escape(link_text)}</a>'
                 '</div>'
             )
         else:
