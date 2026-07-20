@@ -11,6 +11,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from html import escape
 from pathlib import Path
@@ -238,17 +239,116 @@ def report_period_search_titles(report_date: str) -> tuple[str, ...]:
     return (canonical, *aliases.get(month_day, ()))
 
 
-def fetch_financial_report_links(code: str, report_dates: list[str]) -> dict[str, dict[str, str]]:
-    wanted_dates = {value for value in report_dates if value}
-    if not wanted_dates:
-        return {}
-    cache_key = (code, tuple(sorted(wanted_dates)))
-    if cache_key in FINANCIAL_REPORT_LINK_CACHE:
-        return FINANCIAL_REPORT_LINK_CACHE[cache_key]
-
+def match_financial_report_notices(
+    wanted_dates: set[str],
+    notices: list[dict[str, Any]],
+    source: str,
+    title_field: str,
+    url_builder: Callable[[dict[str, Any]], str],
+) -> dict[str, dict[str, str]]:
     expected_titles = {report_date: report_period_search_titles(report_date) for report_date in wanted_dates}
     links: dict[str, dict[str, str]] = {}
     excluded_words = ("摘要", "英文", "说明会", "主要经营数据", "审计报告", "审核报告")
+    for notice in notices:
+        title = str(notice.get(title_field) or "").strip()
+        if not title or any(word in title for word in excluded_words):
+            continue
+        url = str(url_builder(notice) or "").strip()
+        if not url:
+            continue
+        for report_date, title_variants in expected_titles.items():
+            if report_date in links or not any(candidate in title for candidate in title_variants):
+                continue
+            links[report_date] = {
+                "title": report_period_title(report_date),
+                "url": url,
+                "source": source,
+            }
+    return links
+
+
+def official_report_date_range(wanted_dates: set[str]) -> tuple[str, str]:
+    years = [int(value[:4]) for value in wanted_dates if len(value) >= 4 and value[:4].isdigit()]
+    if not years:
+        return "2024-01-01", "2027-12-31"
+    return f"{min(years)}-01-01", f"{max(years) + 1}-12-31"
+
+
+def fetch_sse_financial_report_links(code: str, wanted_dates: set[str]) -> dict[str, dict[str, str]]:
+    begin_date, end_date = official_report_date_range(wanted_dates)
+    params = {
+        "isPagination": "true",
+        "productId": code,
+        "keyWord": "",
+        "securityType": "0101,120100,020100,020200,120200",
+        "reportType2": "DQBG",
+        "reportType": "ALL",
+        "beginDate": begin_date,
+        "endDate": end_date,
+        "pageHelp.pageSize": "100",
+        "pageHelp.pageNo": "1",
+        "pageHelp.beginPage": "1",
+        "pageHelp.endPage": "5",
+    }
+    url = "https://query.sse.com.cn/security/stock/queryCompanyBulletin.do?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.sse.com.cn/"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        notices = (json.loads(resp.read().decode("utf-8"))).get("result") or []
+    return match_financial_report_notices(
+        wanted_dates,
+        notices,
+        "上交所",
+        "TITLE",
+        lambda notice: "https://www.sse.com.cn" + str(notice.get("URL") or ""),
+    )
+
+
+def fetch_szse_financial_report_links(code: str, wanted_dates: set[str]) -> dict[str, dict[str, str]]:
+    begin_date, end_date = official_report_date_range(wanted_dates)
+    category_by_period = {
+        "12-31": "010301",
+        "06-30": "010303",
+        "03-31": "010305",
+        "09-30": "010307",
+    }
+    categories = sorted(
+        {category_by_period[value[5:10]] for value in wanted_dates if value[5:10] in category_by_period}
+    )
+    payload = {
+        "seDate": [begin_date, end_date],
+        "stock": [code],
+        "channelCode": ["fixed_disc"],
+        "bigCategoryId": categories,
+        "pageSize": 50,
+        "pageNum": 1,
+    }
+    req = urllib.request.Request(
+        "https://www.szse.cn/api/disc/announcement/annList",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.szse.cn/disclosure/listed/fixed/index.html",
+            "Origin": "https://www.szse.cn",
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        notices = (json.loads(resp.read().decode("utf-8"))).get("data") or []
+    return match_financial_report_notices(
+        wanted_dates,
+        notices,
+        "深交所",
+        "title",
+        lambda notice: "https://disc.static.szse.cn/download" + str(notice.get("attachPath") or ""),
+    )
+
+
+def fetch_eastmoney_financial_report_links(code: str, wanted_dates: set[str]) -> dict[str, dict[str, str]]:
+    links: dict[str, dict[str, str]] = {}
 
     for page_index in range(1, 7):
         params = {
@@ -273,20 +373,44 @@ def fetch_financial_report_links(code: str, report_dates: list[str]) -> dict[str
         notices = (payload.get("data") or {}).get("list") or []
         if not notices:
             break
-        for notice in notices:
-            title = str(notice.get("title") or "").strip()
-            art_code = str(notice.get("art_code") or "").strip()
-            if not title or not art_code or any(word in title for word in excluded_words):
-                continue
-            for report_date, title_variants in expected_titles.items():
-                if report_date in links or not any(candidate in title for candidate in title_variants):
-                    continue
-                links[report_date] = {
-                    "title": report_period_title(report_date),
-                    "url": f"https://data.eastmoney.com/notices/detail/{code}/{art_code}.html",
-                }
+        links.update(
+            match_financial_report_notices(
+                wanted_dates - set(links),
+                notices,
+                "公告备份",
+                "title",
+                lambda notice: (
+                    f"https://data.eastmoney.com/notices/detail/{code}/{notice.get('art_code')}.html"
+                    if notice.get("art_code")
+                    else ""
+                ),
+            )
+        )
         if len(links) == len(wanted_dates):
             break
+    return links
+
+
+def fetch_financial_report_links(code: str, report_dates: list[str]) -> dict[str, dict[str, str]]:
+    wanted_dates = {value for value in report_dates if value}
+    if not wanted_dates:
+        return {}
+    cache_key = (code, tuple(sorted(wanted_dates)))
+    if cache_key in FINANCIAL_REPORT_LINK_CACHE:
+        return FINANCIAL_REPORT_LINK_CACHE[cache_key]
+
+    links: dict[str, dict[str, str]] = {}
+    try:
+        if code.startswith(("6", "9")):
+            links.update(fetch_sse_financial_report_links(code, wanted_dates))
+        else:
+            links.update(fetch_szse_financial_report_links(code, wanted_dates))
+    except Exception:
+        pass
+
+    missing_dates = wanted_dates - set(links)
+    if missing_dates:
+        links.update(fetch_eastmoney_financial_report_links(code, missing_dates))
     FINANCIAL_REPORT_LINK_CACHE[cache_key] = links
     return links
 
@@ -357,9 +481,11 @@ def balance_snapshot_chart(
         report_date = date_label(balance)
         report_link = report_links.get(report_date) or {}
         if report_link.get("url"):
+            source = report_link.get("source") or "公告原文"
             report_link_html = (
                 '<div class="fs-report-link">'
                 '<span>对应财报：</span>'
+                f'<span class="fs-report-source">{escape(source)}</span>'
                 f'<a href="{escape(report_link["url"], quote=True)}" target="_blank" rel="noopener noreferrer">'
                 f'查看{escape(report_link.get("title") or report_period_title(report_date))}原文</a>'
                 '</div>'
@@ -625,7 +751,7 @@ def fetch_financial_statements_html(code: str) -> str:
 
     return (
         '<style>'
-        '.fs-page{font-family:"Microsoft YaHei",Arial,sans-serif;color:#24292f}.fs-page h2{margin:0 0 8px;font-size:26px}.fs-sub{color:#57606a;margin-bottom:16px}.fs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.fs-panel{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:16px;overflow:auto}.fs-panel h3{margin:0 0 12px;font-size:18px}.fs-mini{width:100%;border-collapse:collapse}.fs-mini th,.fs-mini td{border-bottom:1px solid #d8dee4;padding:8px;text-align:left}.fs-mini th{color:#57606a;font-weight:600;width:46%}.fs-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}.fs-card{border:1px solid #d8dee4;border-radius:8px;background:#f6f8fa;padding:12px}.fs-label{color:#57606a;font-size:13px}.fs-value{margin-top:6px;font-weight:800;font-size:18px}.fs-balance-snapshot{position:relative;border:1px solid #d0d7de;border-radius:8px;background:#fff;margin:14px 0;padding:18px;box-shadow:0 1px 2px rgba(27,31,36,.06);overflow:hidden}.fs-snapshot-panel{display:none}.fs-snapshot-panel.is-active{display:block}.fs-snapshot-head{display:flex;align-items:flex-start;justify-content:center;gap:14px;margin-bottom:6px;padding-right:230px}.fs-snapshot-title{text-align:center;font-weight:900;font-size:20px;color:#24292f}.fs-snapshot-date{text-align:center;margin-top:4px;color:#57606a;font-size:13px}.fs-report-link{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:8px;padding-top:12px;border-top:1px solid #eaeef2;color:#57606a;font-size:13px}.fs-report-link a{color:#0969da;font-weight:700;text-decoration:none}.fs-report-link a:hover{text-decoration:underline}.fs-report-link.is-missing{color:#8c959f}.fs-snapshot-nav{position:absolute;right:18px;top:18px;display:flex;gap:14px;color:#4f8ab8;font-weight:700;font-size:13px;white-space:nowrap;z-index:2}.fs-snapshot-nav button{appearance:none;border:0;background:transparent;padding:0;color:#4f8ab8;font:inherit;font-weight:700;cursor:pointer}.fs-snapshot-nav button:hover{color:#0969da}.fs-snapshot-nav button.is-active{color:#0969da;text-decoration:underline}.fs-snapshot-nav button:disabled,.fs-snapshot-nav button.is-disabled{color:#8c959f;cursor:not-allowed;text-decoration:none}.fs-balance-snapshot svg{display:block;width:100%;height:auto;overflow:visible}.fs-balance-snapshot text{fill:#57606a;font-size:13px}.fs-balance-snapshot .fs-bar-value{fill:#24292f;font-weight:800;font-size:14px}.fs-balance-snapshot .fs-bar-label{fill:#57606a;font-size:12px}.fs-balance-snapshot .fs-group-label{fill:#6b7280;font-size:13px;font-weight:800}.fs-balance-snapshot .fs-unit{fill:#6b7280;font-size:12px}.fs-chart-switcher{margin-top:14px}.fs-chart-stage{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:18px;overflow:hidden}.fs-chart{border:0;background:#fff;padding:0;overflow:hidden}.fs-chart-title{font-weight:900;font-size:22px;margin-bottom:10px}.fs-chart svg{display:block;width:100%;height:auto;max-width:100%;overflow:visible}.fs-chart text{font-size:13px;fill:#57606a}.fs-legend{display:flex;flex-wrap:wrap;gap:8px 14px;color:#57606a;font-size:14px;line-height:1.35;margin-top:6px}.fs-legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.fs-legend i{display:inline-block;width:10px;height:10px;border-radius:999px;flex:0 0 auto}.fs-chart-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.fs-chart-tabs label{border:1px solid #d0d7de;border-radius:999px;background:#fff;color:#24292f;padding:7px 12px;font-size:13px;font-weight:700;cursor:pointer}.fs-chart-tabs label:hover{background:#f6f8fa}.fs-note{margin:12px 0;color:#57606a;font-size:13px;line-height:1.6}.empty{color:#57606a}@media(max-width:720px){.fs-grid{grid-template-columns:1fr}.fs-balance-snapshot{padding:12px}.fs-snapshot-head{display:block;padding-right:0;padding-top:34px}.fs-snapshot-nav{left:12px;right:12px;top:12px;justify-content:center}.fs-report-link{align-items:flex-start;justify-content:flex-start;flex-wrap:wrap}.fs-balance-snapshot .fs-bar-value{font-size:13px}.fs-chart-stage{padding:12px}.fs-chart-title{font-size:18px}.fs-chart text{font-size:14px}.fs-legend{font-size:12px}.fs-chart-tabs label{font-size:12px;padding:6px 10px}}'
+        '.fs-page{font-family:"Microsoft YaHei",Arial,sans-serif;color:#24292f}.fs-page h2{margin:0 0 8px;font-size:26px}.fs-sub{color:#57606a;margin-bottom:16px}.fs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.fs-panel{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:16px;overflow:auto}.fs-panel h3{margin:0 0 12px;font-size:18px}.fs-mini{width:100%;border-collapse:collapse}.fs-mini th,.fs-mini td{border-bottom:1px solid #d8dee4;padding:8px;text-align:left}.fs-mini th{color:#57606a;font-weight:600;width:46%}.fs-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}.fs-card{border:1px solid #d8dee4;border-radius:8px;background:#f6f8fa;padding:12px}.fs-label{color:#57606a;font-size:13px}.fs-value{margin-top:6px;font-weight:800;font-size:18px}.fs-balance-snapshot{position:relative;border:1px solid #d0d7de;border-radius:8px;background:#fff;margin:14px 0;padding:18px;box-shadow:0 1px 2px rgba(27,31,36,.06);overflow:hidden}.fs-snapshot-panel{display:none}.fs-snapshot-panel.is-active{display:block}.fs-snapshot-head{display:flex;align-items:flex-start;justify-content:center;gap:14px;margin-bottom:6px;padding-right:230px}.fs-snapshot-title{text-align:center;font-weight:900;font-size:20px;color:#24292f}.fs-snapshot-date{text-align:center;margin-top:4px;color:#57606a;font-size:13px}.fs-report-link{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:8px;padding-top:12px;border-top:1px solid #eaeef2;color:#57606a;font-size:13px}.fs-report-source{display:inline-flex;align-items:center;min-height:20px;padding:1px 7px;border:1px solid #b6d7c5;border-radius:999px;background:#f0fdf4;color:#166534;font-size:11px;font-weight:800;line-height:1}.fs-report-link a{color:#0969da;font-weight:700;text-decoration:none}.fs-report-link a:hover{text-decoration:underline}.fs-report-link.is-missing{color:#8c959f}.fs-snapshot-nav{position:absolute;right:18px;top:18px;display:flex;gap:14px;color:#4f8ab8;font-weight:700;font-size:13px;white-space:nowrap;z-index:2}.fs-snapshot-nav button{appearance:none;border:0;background:transparent;padding:0;color:#4f8ab8;font:inherit;font-weight:700;cursor:pointer}.fs-snapshot-nav button:hover{color:#0969da}.fs-snapshot-nav button.is-active{color:#0969da;text-decoration:underline}.fs-snapshot-nav button:disabled,.fs-snapshot-nav button.is-disabled{color:#8c959f;cursor:not-allowed;text-decoration:none}.fs-balance-snapshot svg{display:block;width:100%;height:auto;overflow:visible}.fs-balance-snapshot text{fill:#57606a;font-size:13px}.fs-balance-snapshot .fs-bar-value{fill:#24292f;font-weight:800;font-size:14px}.fs-balance-snapshot .fs-bar-label{fill:#57606a;font-size:12px}.fs-balance-snapshot .fs-group-label{fill:#6b7280;font-size:13px;font-weight:800}.fs-balance-snapshot .fs-unit{fill:#6b7280;font-size:12px}.fs-chart-switcher{margin-top:14px}.fs-chart-stage{border:1px solid #d0d7de;border-radius:8px;background:#fff;padding:18px;overflow:hidden}.fs-chart{border:0;background:#fff;padding:0;overflow:hidden}.fs-chart-title{font-weight:900;font-size:22px;margin-bottom:10px}.fs-chart svg{display:block;width:100%;height:auto;max-width:100%;overflow:visible}.fs-chart text{font-size:13px;fill:#57606a}.fs-legend{display:flex;flex-wrap:wrap;gap:8px 14px;color:#57606a;font-size:14px;line-height:1.35;margin-top:6px}.fs-legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.fs-legend i{display:inline-block;width:10px;height:10px;border-radius:999px;flex:0 0 auto}.fs-chart-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.fs-chart-tabs label{border:1px solid #d0d7de;border-radius:999px;background:#fff;color:#24292f;padding:7px 12px;font-size:13px;font-weight:700;cursor:pointer}.fs-chart-tabs label:hover{background:#f6f8fa}.fs-note{margin:12px 0;color:#57606a;font-size:13px;line-height:1.6}.empty{color:#57606a}@media(max-width:720px){.fs-grid{grid-template-columns:1fr}.fs-balance-snapshot{padding:12px}.fs-snapshot-head{display:block;padding-right:0;padding-top:34px}.fs-snapshot-nav{left:12px;right:12px;top:12px;justify-content:center}.fs-report-link{align-items:flex-start;justify-content:flex-start;flex-wrap:wrap}.fs-balance-snapshot .fs-bar-value{font-size:13px}.fs-chart-stage{padding:12px}.fs-chart-title{font-size:18px}.fs-chart text{font-size:14px}.fs-legend{font-size:12px}.fs-chart-tabs label{font-size:12px;padding:6px 10px}}'
         '</style>'
         '<div class="fs-page">'
         f'<h2>{escape(str(name))} 三大财务报表</h2>'
