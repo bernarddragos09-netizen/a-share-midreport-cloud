@@ -1263,6 +1263,10 @@ def write_html_report(
     .business-button:hover {{ background: #ccfbf1; }}
     .business-button:disabled {{ opacity: .65; cursor: wait; }}
     .business-content {{ margin-top: 12px; }}
+    .dividend-button {{ margin-top: 10px; border: 1px solid #bf8700; border-radius: 6px; background: #fff8c5; color: #7d4e00; padding: 7px 12px; cursor: pointer; font-size: 14px; font-weight: 700; }}
+    .dividend-button:hover {{ background: #fae17d; }}
+    .dividend-button:disabled {{ opacity: .65; cursor: wait; }}
+    .dividend-content {{ margin-top: 12px; }}
     .tier-legend {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; margin: 0 0 20px; }}
     .tier-item {{ border-radius: 6px; padding: 8px 10px; color: #111827; background: #fff; border: 1px solid #e5e7eb; }}
     .tier-item strong {{ display: block; margin-bottom: 2px; }}
@@ -1678,6 +1682,11 @@ def write_html_report(
             <div class="business-content">点击后查看公司主营介绍，以及按行业、产品、地区披露的收入、成本、利润、毛利率和营收占比。</div>
           </section>
           <section class="detail-section">
+            <h3>分红历史</h3>
+            <button class="dividend-button" type="button" data-code="${{escapeHtml(item.code)}}">查看分红历史</button>
+            <div class="dividend-content">点击后查看历次分红预案与实施记录；预案会按披露日期插在两次正式分红之间，并可打开交易所源文件。</div>
+          </section>
+          <section class="detail-section">
             <h3>AI总结</h3>
             <div class="detail-ai">${{escapeHtml(item.ai_summary)}}</div>
           </section>
@@ -1794,6 +1803,33 @@ def write_html_report(
         button.disabled = false;
       }}
     }}
+    async function loadDividendHistory(button) {{
+      const code = button.dataset.code;
+      const section = button.closest('.detail-section');
+      const content = section ? section.querySelector('.dividend-content') : null;
+      if (!code || !content) return;
+      if (isStaticSite) {{
+        content.textContent = '静态版不包含实时分红历史，请使用云端版网站查看。';
+        return;
+      }}
+      button.disabled = true;
+      button.textContent = '加载中...';
+      content.textContent = '正在整理分红预案、实施记录和交易所源文件...';
+      try {{
+        const response = await fetch(apiBase + '/dividends?code=' + encodeURIComponent(code) + '&_=' + Date.now(), {{ cache: 'no-store' }});
+        const data = await response.json();
+        if (!response.ok || !data.ok) {{
+          throw new Error(data.error || data.detail || '抓取失败');
+        }}
+        content.innerHTML = data.html || '暂无分红历史';
+        button.textContent = '刷新分红历史';
+      }} catch (error) {{
+        content.textContent = '无法抓取分红历史：' + String(error.message || error);
+        button.textContent = '查看分红历史';
+      }} finally {{
+        button.disabled = false;
+      }}
+    }}
     function setSnapshotPeriod(snapshot, nextIndex) {{
       const panels = Array.from(snapshot.querySelectorAll('.fs-snapshot-panel'));
       if (!panels.length) return;
@@ -1829,6 +1865,17 @@ def write_html_report(
       }}
       if (target && target.classList && target.classList.contains('business-button')) {{
         loadBusinessAnalysis(target);
+      }}
+      if (target && target.classList && target.classList.contains('dividend-button')) {{
+        loadDividendHistory(target);
+      }}
+      if (target && target.classList && target.classList.contains('dividend-source-button')) {{
+        const params = new URLSearchParams({{
+          code: target.dataset.code || '',
+          date: target.dataset.date || '',
+          kind: target.dataset.kind || 'proposal'
+        }});
+        window.open(apiBase + '/dividend-source?' + params.toString(), '_blank', 'noopener');
       }}
       if (target && target.classList && target.classList.contains('fs-snapshot-jump')) {{
         const snapshot = target.closest('.fs-balance-snapshot');

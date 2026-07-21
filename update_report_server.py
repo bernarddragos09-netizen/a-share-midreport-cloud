@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent
 SCRIPT = ROOT / "fetch_2026_midreport_upcoming_sse.py"
 EASTMONEY_DATA_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 FINANCIAL_REPORT_LINK_CACHE: dict[tuple[str, tuple[str, ...]], dict[str, dict[str, str]]] = {}
+EXCHANGE_NOTICE_CACHE: dict[tuple[str, str], list[dict[str, str]]] = {}
 
 
 def eastmoney_market_code(code: str) -> str:
@@ -386,6 +387,257 @@ def fetch_financial_report_links(code: str, report_dates: list[str]) -> dict[str
         }
     FINANCIAL_REPORT_LINK_CACHE[cache_key] = links
     return links
+
+
+def fetch_exchange_notices_on_date(code: str, notice_date: str) -> list[dict[str, str]]:
+    cache_key = (code, notice_date)
+    if cache_key in EXCHANGE_NOTICE_CACHE:
+        return EXCHANGE_NOTICE_CACHE[cache_key]
+
+    notices: list[dict[str, str]] = []
+    if code.startswith(("6", "9")):
+        params = {
+            "isPagination": "true",
+            "productId": code,
+            "keyWord": "",
+            "securityType": "0101,120100,020100,020200,120200",
+            "reportType2": "DQGG",
+            "reportType": "ALL",
+            "beginDate": notice_date,
+            "endDate": notice_date,
+            "pageHelp.pageSize": "100",
+            "pageHelp.pageNo": "1",
+            "pageHelp.beginPage": "1",
+            "pageHelp.endPage": "5",
+        }
+        url = "https://query.sse.com.cn/security/stock/queryCompanyBulletin.do?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.sse.com.cn/"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            rows = (json.loads(resp.read().decode("utf-8"))).get("result") or []
+        notices = [
+            {
+                "title": str(row.get("TITLE") or "").strip(),
+                "url": "https://www.sse.com.cn" + str(row.get("URL") or ""),
+            }
+            for row in rows
+            if row.get("TITLE") and row.get("URL")
+        ]
+    else:
+        url = "https://www.szse.cn/api/disc/announcement/annList"
+        for page_number in range(1, 4):
+            payload = {
+                "seDate": [notice_date, notice_date],
+                "stock": [code],
+                "channelCode": ["listedNotice_disc"],
+                "pageSize": 50,
+                "pageNum": page_number,
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://www.szse.cn/disclosure/listed/notice/index.html",
+                    "Origin": "https://www.szse.cn",
+                    "Content-Type": "application/json",
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                response_data = json.loads(resp.read().decode("utf-8"))
+            rows = response_data.get("data") or []
+            notices.extend(
+                {
+                    "title": str(row.get("title") or "").strip(),
+                    "url": "https://disc.static.szse.cn/download" + str(row.get("attachPath") or ""),
+                }
+                for row in rows
+                if row.get("title") and row.get("attachPath")
+            )
+            if page_number * 50 >= int(response_data.get("announceCount") or 0):
+                break
+
+    EXCHANGE_NOTICE_CACHE[cache_key] = notices
+    return notices
+
+
+def exchange_announcement_search_url(code: str) -> str:
+    if code.startswith(("6", "9")):
+        return (
+            "https://www.sse.com.cn/assortment/stock/list/info/announcement/index.shtml?"
+            + urllib.parse.urlencode({"productId": code})
+        )
+    return "https://www.szse.cn/disclosure/listed/notice/index.html?" + urllib.parse.urlencode({"stock": code})
+
+
+def dividend_notice_score(title: str, kind: str) -> int:
+    if kind == "implementation":
+        phrases = (
+            ("利润分配实施公告", 120),
+            ("权益分派实施公告", 120),
+            ("权益分配实施公告", 115),
+            ("现金红利发放实施公告", 115),
+            ("分红派息实施公告", 110),
+            ("利润分配实施", 105),
+            ("权益分派", 80),
+        )
+        return max((score for phrase, score in phrases if phrase in title), default=0)
+
+    phrases = (
+        ("利润分配方案", 120),
+        ("利润分配预案", 120),
+        ("中期利润分配安排", 115),
+        ("分红回报规划", 110),
+        ("现金分红", 95),
+        ("利润分配", 85),
+        ("分红", 70),
+    )
+    score = max((points for phrase, points in phrases if phrase in title), default=0)
+    if any(word in title for word in ("实施公告", "实施方案")):
+        score -= 100
+    return max(score, 0)
+
+
+def resolve_dividend_source_url(code: str, notice_date: str, kind: str) -> str:
+    notices: list[dict[str, str]] = []
+    for _ in range(2):
+        try:
+            notices = fetch_exchange_notices_on_date(code, notice_date)
+            break
+        except Exception:
+            continue
+    ranked = sorted(
+        ((dividend_notice_score(item.get("title", ""), kind), item) for item in notices),
+        key=lambda value: value[0],
+        reverse=True,
+    )
+    if ranked and ranked[0][0] > 0:
+        return ranked[0][1]["url"]
+    return exchange_announcement_search_url(code)
+
+
+def dividend_period_label(report_date: str) -> str:
+    year = report_date[:4]
+    suffix = {
+        "03-31": "一季度",
+        "06-30": "中期",
+        "09-30": "三季度",
+        "12-31": "年度",
+    }.get(report_date[5:10], "报告期")
+    return f"{year}年{suffix}" if year else suffix
+
+
+def fetch_dividend_history_html(code: str) -> str:
+    rows = fetch_eastmoney_report("RPT_SHAREBONUS_DET", code, page_size=200)
+    if not rows:
+        return '<div class="dividend-empty">暂无公开分红历史。</div>'
+
+    company_name = str(rows[-1].get("SECURITY_NAME_ABBR") or code)
+    events: list[dict[str, Any]] = []
+    implemented_rows: list[dict[str, Any]] = []
+    pending_count = 0
+
+    for row in rows:
+        report_date = str(row.get("REPORT_DATE") or "")[:10]
+        proposal_date = str(row.get("PLAN_NOTICE_DATE") or row.get("PUBLISH_DATE") or "")[:10]
+        implementation_date = str(row.get("NOTICE_DATE") or "")[:10]
+        progress = str(row.get("ASSIGN_PROGRESS") or "")
+        common = {
+            "report_date": report_date,
+            "period": dividend_period_label(report_date),
+            "scheme": str(row.get("IMPL_PLAN_PROFILE") or "暂无具体分配金额"),
+            "cash": row.get("PRETAX_BONUS_RMB"),
+            "bonus": row.get("BONUS_RATIO"),
+            "transfer": row.get("IT_RATIO"),
+            "record_date": str(row.get("EQUITY_RECORD_DATE") or "")[:10],
+            "ex_date": str(row.get("EX_DIVIDEND_DATE") or "")[:10],
+            "progress": progress,
+        }
+        if proposal_date:
+            events.append({**common, "date": proposal_date, "kind": "proposal"})
+        if "实施" in progress and implementation_date:
+            events.append({**common, "date": implementation_date, "kind": "implementation"})
+            implemented_rows.append(row)
+        elif progress:
+            pending_count += 1
+
+    events.sort(key=lambda item: (item["date"], item["kind"] == "implementation"), reverse=True)
+    latest_implementation = max(
+        (str(row.get("NOTICE_DATE") or "")[:10] for row in implemented_rows),
+        default="-",
+    )
+    latest_cash_row = max(
+        implemented_rows,
+        key=lambda row: str(row.get("NOTICE_DATE") or ""),
+        default={},
+    )
+    latest_cash = num(latest_cash_row.get("PRETAX_BONUS_RMB"))
+    latest_cash_text = f"{latest_cash:,.4f}".rstrip("0").rstrip(".") if latest_cash is not None else "-"
+
+    event_html: list[str] = []
+    for event in events:
+        is_implementation = event["kind"] == "implementation"
+        kind_text = "实施分红" if is_implementation else "分红预案"
+        kind_class = "is-implementation" if is_implementation else "is-proposal"
+        date_label_text = "实施公告日" if is_implementation else "预案披露日"
+        extra_dates = ""
+        if is_implementation:
+            extra_dates = (
+                '<div class="dividend-dates">'
+                f'<span>股权登记日 <strong>{escape(event["record_date"] or "-")}</strong></span>'
+                f'<span>除权除息日 <strong>{escape(event["ex_date"] or "-")}</strong></span>'
+                "</div>"
+            )
+        cash_value = num(event.get("cash"))
+        cash_text = f"{cash_value:,.4f}".rstrip("0").rstrip(".") if cash_value is not None else "-"
+        source_button = (
+            '<button class="dividend-source-button" type="button" '
+            f'data-code="{escape(code)}" data-date="{escape(event["date"])}" '
+            f'data-kind="{escape(event["kind"])}">查看源文件</button>'
+        )
+        event_html.append(
+            f'<article class="dividend-event {kind_class}">'
+            '<div class="dividend-event-date">'
+            f'<strong>{escape(event["date"])}</strong><span>{date_label_text}</span>'
+            "</div>"
+            '<div class="dividend-marker" aria-hidden="true"></div>'
+            '<div class="dividend-event-body">'
+            '<div class="dividend-event-head">'
+            f'<span class="dividend-kind">{kind_text}</span>'
+            f'<strong>{escape(event["period"])}</strong>'
+            "</div>"
+            f'<div class="dividend-scheme">{escape(event["scheme"])}</div>'
+            '<div class="dividend-facts">'
+            f'<span>每10股税前现金 <strong>{cash_text} 元</strong></span>'
+            f'<span>送股 <strong>{fmt_num(event.get("bonus")) if event.get("bonus") not in (None, "") else "-"}</strong></span>'
+            f'<span>转增 <strong>{fmt_num(event.get("transfer")) if event.get("transfer") not in (None, "") else "-"}</strong></span>'
+            "</div>"
+            f"{extra_dates}"
+            "</div>"
+            f'<div class="dividend-event-action">{source_button}</div>'
+            "</article>"
+        )
+
+    return (
+        '<style>'
+        '.dividend-page{font-family:"Microsoft YaHei",Arial,sans-serif;color:#24292f}.dividend-page h2{margin:0;font-size:26px}.dividend-sub{margin-top:6px;color:#57606a;font-size:13px}.dividend-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:18px 0}.dividend-stat{border:1px solid #d0d7de;border-radius:8px;background:#f6f8fa;padding:12px}.dividend-stat span{display:block;color:#57606a;font-size:12px}.dividend-stat strong{display:block;margin-top:5px;font-size:18px}.dividend-timeline{position:relative;border-top:1px solid #d8dee4}.dividend-event{display:grid;grid-template-columns:118px 20px minmax(0,1fr) auto;gap:12px;align-items:start;padding:18px 0;border-bottom:1px solid #d8dee4}.dividend-event-date strong,.dividend-event-date span{display:block}.dividend-event-date strong{font-family:Consolas,monospace;font-size:13px}.dividend-event-date span{margin-top:4px;color:#57606a;font-size:12px}.dividend-marker{width:12px;height:12px;margin-top:4px;border-radius:50%;box-shadow:0 0 0 4px #fff}.is-implementation .dividend-marker{background:#1a7f37;border:2px solid #aceebb}.is-proposal .dividend-marker{background:#bf8700;border:2px solid #f8e3a1}.dividend-event-head{display:flex;align-items:center;gap:8px}.dividend-event-head>strong{font-size:14px}.dividend-kind{display:inline-flex;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800}.is-implementation .dividend-kind{background:#dafbe1;color:#116329}.is-proposal .dividend-kind{background:#fff8c5;color:#7d4e00}.dividend-scheme{margin-top:8px;font-size:16px;font-weight:800;line-height:1.55}.dividend-facts,.dividend-dates{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:8px;color:#57606a;font-size:12px}.dividend-facts strong,.dividend-dates strong{color:#24292f}.dividend-source-button{border:1px solid #0969da;border-radius:6px;background:#fff;color:#0969da;padding:7px 10px;font-weight:700;cursor:pointer;white-space:nowrap}.dividend-source-button:hover{background:#ddf4ff}.dividend-note{margin-top:14px;color:#57606a;font-size:12px;line-height:1.6}.dividend-empty{color:#57606a;padding:12px 0}@media(max-width:720px){.dividend-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.dividend-event{grid-template-columns:92px 16px minmax(0,1fr)}.dividend-event-action{grid-column:3}.dividend-scheme{font-size:14px}}'
+        '</style>'
+        '<div class="dividend-page">'
+        f'<h2>{escape(company_name)} 分红历史</h2>'
+        f'<div class="dividend-sub">股票代码：{escape(code)}；预案与实施公告按真实披露日期统一排列</div>'
+        '<section class="dividend-summary">'
+        f'<div class="dividend-stat"><span>历史分红方案</span><strong>{len(rows)} 期</strong></div>'
+        f'<div class="dividend-stat"><span>已实施</span><strong>{len(implemented_rows)} 期</strong></div>'
+        f'<div class="dividend-stat"><span>待实施或预披露</span><strong>{pending_count} 期</strong></div>'
+        f'<div class="dividend-stat"><span>最近每10股税前现金</span><strong>{latest_cash_text} 元</strong></div>'
+        "</section>"
+        f'<div class="dividend-timeline">{"".join(event_html)}</div>'
+        f'<div class="dividend-note">最近一次实施公告：{escape(latest_implementation)}。分红方案数据来自公开分红记录；“查看源文件”会按公告日期跳转至上交所或深交所披露原文。</div>'
+        "</div>"
+    )
 
 
 def balance_snapshot_chart(
@@ -1266,16 +1518,25 @@ class UpdateHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path not in {"/broker", "/financials", "/business"}:
+        if parsed.path not in {"/broker", "/financials", "/business", "/dividends", "/dividend-source"}:
             self.send_json(404, {"ok": False, "error": "Unknown endpoint"})
             return
         query = urllib.parse.parse_qs(parsed.query)
         code = (query.get("code") or [""])[0]
         try:
+            if parsed.path == "/dividend-source":
+                notice_date = (query.get("date") or [""])[0]
+                kind = (query.get("kind") or ["proposal"])[0]
+                self.send_response(302)
+                self.send_header("Location", resolve_dividend_source_url(code, notice_date, kind))
+                self.end_headers()
+                return
             if parsed.path == "/broker":
                 html = fetch_broker_forecast_html(code)
             elif parsed.path == "/business":
                 html = fetch_business_analysis_html(code)
+            elif parsed.path == "/dividends":
+                html = fetch_dividend_history_html(code)
             else:
                 html = fetch_financial_statements_html(code)
             self.send_json(200, {"ok": True, "html": html})

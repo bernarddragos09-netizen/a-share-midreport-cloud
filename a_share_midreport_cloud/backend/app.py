@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +19,9 @@ sys.path.insert(0, str(ROOT))
 from update_report_server import (  # noqa: E402
     fetch_broker_forecast_html,
     fetch_business_analysis_html,
+    fetch_dividend_history_html,
     fetch_financial_statements_html,
+    resolve_dividend_source_url,
 )
 
 
@@ -72,6 +74,25 @@ def business(code: str, response: Response) -> dict[str, object]:
     try:
         html = fetch_business_analysis_html(code)
         return {"ok": True, "html": html}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/dividends")
+def dividends(code: str, response: Response) -> dict[str, object]:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        html = fetch_dividend_history_html(code)
+        return {"ok": True, "html": html}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/dividend-source")
+def dividend_source(code: str, date: str, kind: str) -> RedirectResponse:
+    try:
+        source_url = resolve_dividend_source_url(code, date, kind)
+        return RedirectResponse(source_url, status_code=302)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
