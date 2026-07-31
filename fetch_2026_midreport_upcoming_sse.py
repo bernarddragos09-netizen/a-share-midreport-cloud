@@ -1117,8 +1117,8 @@ def write_html_report(
             else '<div class="empty-note">这一天暂无中报预约披露公司。</div>'
         )
         forecast_block = (
-            '<details class="forecast-details" open>'
-            '<summary>展开业绩预告列表</summary>'
+            '<details class="forecast-details">'
+            '<summary><span class="toggle-closed">展开业绩预告列表</span><span class="toggle-open">收起业绩预告列表</span></summary>'
             '<div class="company-table-wrap">'
             '<table class="company-table forecast-table">'
             '<thead><tr><th>股票</th><th>预告类型</th><th>总市值</th><th>预告归母净利润</th><th>预告扣非归母净利润</th><th>一季报归母净利润</th><th>一季报扣非归母净利润</th><th>公告摘要</th></tr></thead>'
@@ -1137,8 +1137,8 @@ def write_html_report(
               <td class="count">
                 <strong>{html.escape(str(count_by_date.get(date, 0)))}</strong>
                 {f'<span class="forecast-inline">业绩预告 {len(forecast_groups.get(date, []))} 家</span>' if forecast_groups.get(date) else ''}
-                <details>
-                  <summary>展开企业列表</summary>
+                <details class="schedule-details">
+                  <summary><span class="toggle-closed">展开企业列表</span><span class="toggle-open">收起企业列表</span></summary>
                   {schedule_block}
                 </details>
                 {forecast_block}
@@ -1191,6 +1191,13 @@ def write_html_report(
     .calendar-day.is-outside {{ opacity: .38; }}
     .calendar-day.calendar-selected {{ outline: 3px solid #f59e0b; outline-offset: -3px; background: #fffbeb; }}
     .detail-title {{ margin: 0 0 10px; font-size: 18px; }}
+    .date-detail-panel {{ margin-top: 0; }}
+    .date-detail-panel > summary {{ margin-bottom: 0; border-color: #0f766e; background: #ecfdf5; color: #0f766e; font-weight: 800; }}
+    .date-detail-panel > summary:hover {{ background: #d1fae5; }}
+    .date-detail-panel[open] > summary {{ margin-bottom: 10px; }}
+    .toggle-open {{ display: none; }}
+    details[open] > summary .toggle-closed {{ display: none; }}
+    details[open] > summary .toggle-open {{ display: inline; }}
     table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }}
     th, td {{ border-bottom: 1px solid #e5e7eb; padding: 12px 14px; vertical-align: top; text-align: left; }}
     th {{ background: #eef2f7; }}
@@ -1364,10 +1371,13 @@ def write_html_report(
       {"".join(calendar_months)}
     </section>
     <h2 id="detailTitle" class="detail-title">日期详情</h2>
-    <table>
-      <thead><tr><th>日期</th><th>公布家数 / 企业列表</th></tr></thead>
-      <tbody>{"".join(table_rows)}</tbody>
-    </table>
+    <details id="dateDetailPanel" class="date-detail-panel">
+      <summary><span class="toggle-closed">显示日期详情</span><span class="toggle-open">隐藏日期详情</span></summary>
+      <table>
+        <thead><tr><th>日期</th><th>公布家数 / 企业列表</th></tr></thead>
+        <tbody>{"".join(table_rows)}</tbody>
+      </table>
+    </details>
   </main>
   <section id="detailOverlay" class="detail-overlay" hidden>
     <div class="detail-shell">
@@ -1401,6 +1411,8 @@ def write_html_report(
     function jumpToCompany(item) {{
       const cell = document.getElementById('date-' + item.date);
       const companyRow = document.getElementById('company-' + item.code);
+      const dateDetailPanel = document.getElementById('dateDetailPanel');
+      if (dateDetailPanel) dateDetailPanel.open = true;
       clearHighlights();
       selectCalendarDay(item.date);
       if (cell) {{
@@ -1423,14 +1435,13 @@ def write_html_report(
       const cell = document.getElementById('date-' + date);
       if (!cell) return;
       const row = cell.closest('tr');
+      const dateDetailPanel = document.getElementById('dateDetailPanel');
+      if (dateDetailPanel) dateDetailPanel.open = true;
       clearHighlights();
       selectCalendarDay(date);
       if (row) {{
         row.classList.add('highlight-row');
-        const dateDetails = row.querySelector('td.count > details');
-        if (dateDetails) dateDetails.open = true;
-        const scrollTarget = dateDetails || row;
-        scrollTarget.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+        row.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
       }}
     }}
     document.querySelectorAll('.calendar-day.has-count').forEach(button => {{
