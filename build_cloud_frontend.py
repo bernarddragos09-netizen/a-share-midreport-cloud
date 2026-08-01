@@ -117,6 +117,10 @@ def build_snapshot(force: bool = False, quotes_only: bool = False) -> Path:
         print(f"Keeping existing stock snapshot: {SNAPSHOT_PATH}")
         return SNAPSHOT_PATH
 
+    previous_payload = {}
+    if SNAPSHOT_PATH.exists():
+        previous_payload = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+
     source_path, document, search_index, detail_index = find_source_report()
     ordered_codes = [str(item.get("code", "")) for item in search_index]
     stocks = [detail_index[code] for code in ordered_codes if code in detail_index]
@@ -130,6 +134,10 @@ def build_snapshot(force: bool = False, quotes_only: bool = False) -> Path:
         "count": len(stocks),
         "stocks": stocks,
     }
+    if previous_payload.get("fundamentals"):
+        payload["fundamentals"] = previous_payload["fundamentals"]
+        payload["akshare_generated_at"] = previous_payload.get("akshare_generated_at", "")
+        payload["akshare_sources"] = previous_payload.get("akshare_sources", [])
     payload["quotes"] = fetch_quote_metrics([str(item.get("code", "")) for item in stocks])
     payload["quote_generated_at"] = datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
     CLOUD_DATA_DIR.mkdir(parents=True, exist_ok=True)

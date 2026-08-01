@@ -21,6 +21,7 @@ CALENDAR_INDEX = FRONTEND_DIR / "calendar.html"
 SNAPSHOT_PATH = ROOT / "a_share_midreport_cloud" / "data" / "stock_snapshot.json"
 FETCH_SCRIPT = ROOT / "fetch_2026_midreport_upcoming_sse.py"
 CLOUD_BUILD_SCRIPT = ROOT / "build_cloud_frontend.py"
+AKSHARE_SCRIPT = ROOT / "fetch_akshare_metrics.py"
 
 sys.path.insert(0, str(ROOT))
 from update_report_server import (  # noqa: E402
@@ -72,7 +73,26 @@ def _fetch_quote_snapshot() -> dict[str, dict[str, Any]]:
     return payload.get("quotes") or {}
 
 
-def _risk_tags(stock: dict[str, Any]) -> list[str]:
+def _fetch_fundamental_snapshot() -> dict[str, dict[str, Any]]:
+    payload, _ = _load_snapshot()
+    return payload.get("fundamentals") or {}
+
+
+def _cashflow_status(fundamental: dict[str, Any]) -> str:
+    operating_cashflow = _safe_float(fundamental.get("operating_cashflow"))
+    if operating_cashflow is None:
+        operating_cashflow = _safe_float(fundamental.get("ocf_per_share"))
+    if operating_cashflow is None:
+        return "暂无数据"
+    if operating_cashflow > 0:
+        return "经营现金流为正"
+    if operating_cashflow < 0:
+        return "经营现金流为负"
+    return "经营现金流接近零"
+
+
+def _risk_tags(stock: dict[str, Any], fundamental: dict[str, Any] | None = None) -> list[str]:
+    fundamental = fundamental or {}
     tags: list[str] = []
     name = str(stock.get("name", ""))
     profit_growth = _safe_float(stock.get("profit_growth"))
@@ -80,16 +100,35 @@ def _risk_tags(stock: dict[str, Any]) -> list[str]:
         tags.append("ST风险")
     if profit_growth is not None and profit_growth < 0:
         tags.append("利润下滑")
+    debt_ratio = _safe_float(fundamental.get("debt_ratio"))
+    if debt_ratio is not None and debt_ratio >= 70:
+        tags.append("高负债")
+    if _cashflow_status(fundamental) == "经营现金流为负":
+        tags.append("现金流为负")
+    roe = _safe_float(fundamental.get("roe"))
+    if roe is not None and roe < 0:
+        tags.append("ROE为负")
     if any(item in (stock.get("sectors") or []) for item in ("资源与材料", "农林牧渔", "交通运输")):
         tags.append("周期波动")
     if stock.get("source") == "待披露":
         tags.append("数据待披露")
-    return tags[:2]
+    return tags[:3]
 
 
-def _public_stock(stock: dict[str, Any], quote: dict[str, Any] | None = None) -> dict[str, Any]:
+def _public_stock(
+    stock: dict[str, Any],
+    quote: dict[str, Any] | None = None,
+    fundamental: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     quote = quote or {}
+    fundamental = fundamental or {}
     result = dict(stock)
+    revenue_growth = _safe_float(stock.get("revenue_growth"))
+    if revenue_growth is None:
+        revenue_growth = _safe_float(fundamental.get("financial_revenue_growth"))
+    profit_growth = _safe_float(stock.get("profit_growth"))
+    if profit_growth is None:
+        profit_growth = _safe_float(fundamental.get("financial_profit_growth"))
     result.update(
         {
             "price": quote.get("price"),
@@ -102,10 +141,26 @@ def _public_stock(stock: dict[str, Any], quote: dict[str, Any] | None = None) ->
                 if quote.get("market_cap") is not None
                 else None
             ),
-            "roe": None,
-            "dividend_yield": None,
-            "cashflow_status": "待接入",
-            "risk_tags": _risk_tags(stock),
+            "revenue_growth": revenue_growth,
+            "profit_growth": profit_growth,
+            "roe": _safe_float(fundamental.get("roe")),
+            "gross_margin": _safe_float(fundamental.get("gross_margin")),
+            "dividend_yield": _safe_float(fundamental.get("dividend_yield")),
+            "debt_ratio": _safe_float(fundamental.get("debt_ratio")),
+            "operating_cashflow": _safe_float(fundamental.get("operating_cashflow")),
+            "ocf_per_share": _safe_float(fundamental.get("ocf_per_share")),
+            "cashflow_status": _cashflow_status(fundamental),
+            "financial_period": fundamental.get("financial_period") or "",
+            "balance_period": fundamental.get("balance_period") or "",
+            "cashflow_period": fundamental.get("cashflow_period") or "",
+            "financial_source": fundamental.get("financial_source") or "",
+            "ak_industry": fundamental.get("ak_industry") or "",
+            "financial_revenue_growth": _safe_float(fundamental.get("financial_revenue_growth")),
+            "financial_profit_growth": _safe_float(fundamental.get("financial_profit_growth")),
+            "financial_revenue": _safe_float(fundamental.get("revenue")),
+            "financial_net_profit": _safe_float(fundamental.get("net_profit")),
+            "dividend_period": fundamental.get("dividend_period") or "",
+            "risk_tags": _risk_tags(stock, fundamental),
         }
     )
     return result
@@ -172,6 +227,8 @@ def health() -> dict[str, object]:
         "frontend_built": FRONTEND_INDEX.exists(),
         "stock_count": payload.get("count", 0),
         "generated_at": payload.get("generated_at", ""),
+        "fundamental_count": len(payload.get("fundamentals") or {}),
+        "akshare_generated_at": payload.get("akshare_generated_at", ""),
     }
 
 
@@ -181,6 +238,7 @@ def home(response: Response) -> dict[str, Any]:
     payload, _ = _load_snapshot()
     stocks = payload.get("stocks") or []
     quotes = _fetch_quote_snapshot()
+    fundamentals = _fetch_fundamental_snapshot()
     reported = [
         item
         for item in stocks
@@ -206,7 +264,14 @@ def home(response: Response) -> dict[str, Any]:
         "report_period": payload.get("report_period", "2026中报"),
         "generated_at": payload.get("generated_at", ""),
         "stock_count": len(stocks),
-        "latest": [_public_stock(item, quotes.get(str(item.get("code")))) for item in latest],
+        "latest": [
+            _public_stock(
+                item,
+                quotes.get(str(item.get("code"))),
+                fundamentals.get(str(item.get("code"))),
+            )
+            for item in latest
+        ],
         "industries": [{"name": name, "count": count} for name, count in sectors.most_common(12)],
     }
 
@@ -252,6 +317,7 @@ def screen_stocks(
     q: str = "",
     sector: str = "",
     market: str = "",
+    pe_min: float | None = None,
     pe_max: float | None = None,
     pb_max: float | None = None,
     market_cap_min: float | None = None,
@@ -259,6 +325,10 @@ def screen_stocks(
     revenue_growth_min: float | None = None,
     profit_growth_min: float | None = None,
     deduct_growth_min: float | None = None,
+    roe_min: float | None = None,
+    dividend_yield_min: float | None = None,
+    debt_ratio_max: float | None = None,
+    cashflow: str = "",
     source: str = "",
     exclude_st: bool = True,
     sort: str = "profit_growth",
@@ -269,6 +339,7 @@ def screen_stocks(
     response.headers["Cache-Control"] = "no-store"
     _, stock_index = _load_snapshot()
     quotes = _fetch_quote_snapshot()
+    fundamentals = _fetch_fundamental_snapshot()
     results: list[dict[str, Any]] = []
 
     for stock in stock_index.values():
@@ -284,6 +355,8 @@ def screen_stocks(
             continue
 
         quote = quotes.get(str(stock.get("code")), {})
+        fundamental = fundamentals.get(str(stock.get("code")), {})
+        item = _public_stock(stock, quote, fundamental)
         pe = _safe_float(quote.get("pe"))
         pb = _safe_float(quote.get("pb"))
         market_cap_yi = (
@@ -291,10 +364,15 @@ def screen_stocks(
             if _safe_float(quote.get("market_cap")) is not None
             else None
         )
-        revenue_growth = _safe_float(stock.get("revenue_growth"))
-        profit_growth = _safe_float(stock.get("profit_growth"))
+        revenue_growth = _safe_float(item.get("revenue_growth"))
+        profit_growth = _safe_float(item.get("profit_growth"))
         deduct_growth = _safe_float(stock.get("deduct_growth"))
+        roe = _safe_float(item.get("roe"))
+        dividend_yield = _safe_float(item.get("dividend_yield"))
+        debt_ratio = _safe_float(item.get("debt_ratio"))
 
+        if pe_min is not None and (pe is None or pe < pe_min):
+            continue
         if pe_max is not None and (pe is None or pe <= 0 or pe > pe_max):
             continue
         if pb_max is not None and (pb is None or pb <= 0 or pb > pb_max):
@@ -309,7 +387,19 @@ def screen_stocks(
             continue
         if deduct_growth_min is not None and (deduct_growth is None or deduct_growth < deduct_growth_min):
             continue
-        results.append(_public_stock(stock, quote))
+        if roe_min is not None and (roe is None or roe < roe_min):
+            continue
+        if dividend_yield_min is not None and (
+            dividend_yield is None or dividend_yield < dividend_yield_min
+        ):
+            continue
+        if debt_ratio_max is not None and (debt_ratio is None or debt_ratio > debt_ratio_max):
+            continue
+        if cashflow == "positive" and item.get("cashflow_status") != "经营现金流为正":
+            continue
+        if cashflow == "negative" and item.get("cashflow_status") != "经营现金流为负":
+            continue
+        results.append(item)
 
     sort_fields = {
         "code": "code",
@@ -321,6 +411,9 @@ def screen_stocks(
         "revenue_growth": "revenue_growth",
         "profit_growth": "profit_growth",
         "deduct_growth": "deduct_growth",
+        "roe": "roe",
+        "dividend_yield": "dividend_yield",
+        "debt_ratio": "debt_ratio",
     }
     sort_field = sort_fields.get(sort, "profit_growth")
     reverse = order != "asc"
@@ -353,7 +446,8 @@ def stock_summary(code: str, response: Response) -> dict[str, Any]:
     if not stock:
         raise HTTPException(status_code=404, detail="未找到该股票")
     quotes = _fetch_quote_snapshot()
-    item = _public_stock(stock, quotes.get(code))
+    fundamentals = _fetch_fundamental_snapshot()
+    item = _public_stock(stock, quotes.get(code), fundamentals.get(code))
     primary_sector = (stock.get("sectors") or ["综合"])[0]
     peers = [
         other
@@ -453,10 +547,28 @@ async def update() -> dict[str, object]:
             error = build_result.stderr[-3000:] or build_result.stdout[-3000:] or "cloud build failed"
             raise HTTPException(status_code=500, detail=error)
 
+        akshare_result = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, str(AKSHARE_SCRIPT)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        akshare_warning = ""
+        if akshare_result.returncode != 0:
+            akshare_warning = (
+                akshare_result.stderr[-2000:]
+                or akshare_result.stdout[-2000:]
+                or "AKShare update failed; previous fundamentals were retained"
+            )
+
         _snapshot_cache.update({"mtime": None, "payload": None, "index": None})
         return {
             "ok": True,
             "message": "更新完成",
             "fetch_output": fetch_result.stdout[-2000:],
             "build_output": build_result.stdout[-2000:],
+            "akshare_output": akshare_result.stdout[-2000:],
+            "warning": akshare_warning,
         }
