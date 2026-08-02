@@ -124,6 +124,7 @@ def _merge_balance_sheet(
     for code, row in _rows_by_code(frame, "股票代码").items():
         item = metrics.setdefault(code, {})
         item["balance_period"] = f"{period[:4]}-{period[4:6]}-{period[6:]}"
+        item["balance_source"] = "AKShare/东方财富资产负债表"
         for key, column in (
             ("debt_ratio", "资产负债率"),
             ("total_assets", "资产-总资产"),
@@ -139,6 +140,7 @@ def _merge_cashflow(
     for code, row in _rows_by_code(frame, "股票代码").items():
         item = metrics.setdefault(code, {})
         item["cashflow_period"] = f"{period[:4]}-{period[4:6]}-{period[6:]}"
+        item["cashflow_source"] = "AKShare/东方财富现金流量表"
         for key, column in (
             ("operating_cashflow", "经营性现金流-现金流量净额"),
             ("investing_cashflow", "投资性现金流-现金流量净额"),
@@ -160,6 +162,7 @@ def _merge_dividends(
                 "dividend_yield": dividend_yield * 100,
                 "dividend_period": f"{period[:4]}-{period[4:6]}-{period[6:]}",
                 "dividend_status": str(row.get("方案进度") or "").strip(),
+                "dividend_source": "AKShare/东方财富分红配送",
             }
         )
 
@@ -206,6 +209,7 @@ def refresh(periods: list[str], dividend_periods: list[str]) -> dict[str, Any]:
 
     metrics = {code: item for code, item in metrics.items() if code in allowed_codes}
     payload["fundamentals"] = metrics
+    payload["data_provider"] = "AKShare"
     payload["akshare_generated_at"] = datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
     payload["akshare_sources"] = successful_sources
     temporary = SNAPSHOT_PATH.with_suffix(".tmp")

@@ -136,8 +136,18 @@ def build_snapshot(force: bool = False, quotes_only: bool = False) -> Path:
     }
     if previous_payload.get("fundamentals"):
         payload["fundamentals"] = previous_payload["fundamentals"]
-        payload["akshare_generated_at"] = previous_payload.get("akshare_generated_at", "")
-        payload["akshare_sources"] = previous_payload.get("akshare_sources", [])
+        for key in (
+            "data_provider",
+            "akshare_generated_at",
+            "akshare_sources",
+            "tushare_generated_at",
+            "tushare_sources",
+            "tushare_quote_count",
+            "tushare_disclosure_count",
+            "tushare_financial_count",
+        ):
+            if key in previous_payload:
+                payload[key] = previous_payload[key]
     payload["quotes"] = fetch_quote_metrics([str(item.get("code", "")) for item in stocks])
     payload["quote_generated_at"] = datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
     CLOUD_DATA_DIR.mkdir(parents=True, exist_ok=True)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import subprocess
 import sys
 from collections import Counter
@@ -22,6 +23,7 @@ SNAPSHOT_PATH = ROOT / "a_share_midreport_cloud" / "data" / "stock_snapshot.json
 FETCH_SCRIPT = ROOT / "fetch_2026_midreport_upcoming_sse.py"
 CLOUD_BUILD_SCRIPT = ROOT / "build_cloud_frontend.py"
 AKSHARE_SCRIPT = ROOT / "fetch_akshare_metrics.py"
+TUSHARE_SCRIPT = ROOT / "fetch_tushare_metrics.py"
 
 sys.path.insert(0, str(ROOT))
 from update_report_server import (  # noqa: E402
@@ -154,6 +156,9 @@ def _public_stock(
             "balance_period": fundamental.get("balance_period") or "",
             "cashflow_period": fundamental.get("cashflow_period") or "",
             "financial_source": fundamental.get("financial_source") or "",
+            "balance_source": fundamental.get("balance_source") or "",
+            "cashflow_source": fundamental.get("cashflow_source") or "",
+            "dividend_source": fundamental.get("dividend_source") or "",
             "ak_industry": fundamental.get("ak_industry") or "",
             "financial_revenue_growth": _safe_float(fundamental.get("financial_revenue_growth")),
             "financial_profit_growth": _safe_float(fundamental.get("financial_profit_growth")),
@@ -228,7 +233,15 @@ def health() -> dict[str, object]:
         "stock_count": payload.get("count", 0),
         "generated_at": payload.get("generated_at", ""),
         "fundamental_count": len(payload.get("fundamentals") or {}),
+        "data_provider": payload.get("data_provider", "AKShare"),
         "akshare_generated_at": payload.get("akshare_generated_at", ""),
+        "tushare_configured": bool(
+            os.environ.get("TUSHARE_TOKEN") or os.environ.get("TS_TOKEN")
+        ),
+        "tushare_generated_at": payload.get("tushare_generated_at", ""),
+        "tushare_quote_count": payload.get("tushare_quote_count", 0),
+        "tushare_disclosure_count": payload.get("tushare_disclosure_count", 0),
+        "tushare_financial_count": payload.get("tushare_financial_count", 0),
     }
 
 
@@ -263,6 +276,8 @@ def home(response: Response) -> dict[str, Any]:
         "ok": True,
         "report_period": payload.get("report_period", "2026中报"),
         "generated_at": payload.get("generated_at", ""),
+        "data_provider": payload.get("data_provider", "AKShare"),
+        "tushare_generated_at": payload.get("tushare_generated_at", ""),
         "stock_count": len(stocks),
         "latest": [
             _public_stock(
@@ -563,12 +578,35 @@ async def update() -> dict[str, object]:
                 or "AKShare update failed; previous fundamentals were retained"
             )
 
+        tushare_output = ""
+        tushare_warning = ""
+        if os.environ.get("TUSHARE_TOKEN") or os.environ.get("TS_TOKEN"):
+            tushare_result = await asyncio.to_thread(
+                subprocess.run,
+                [sys.executable, str(TUSHARE_SCRIPT)],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                timeout=900,
+            )
+            tushare_output = tushare_result.stdout[-2000:]
+            if tushare_result.returncode != 0:
+                tushare_warning = (
+                    tushare_result.stderr[-2000:]
+                    or tushare_output
+                    or "Tushare Pro update failed; the AKShare fallback was retained"
+                )
+        else:
+            tushare_warning = "TUSHARE_TOKEN 未配置，本次继续使用 AKShare 数据"
+
         _snapshot_cache.update({"mtime": None, "payload": None, "index": None})
+        warnings = [warning for warning in (akshare_warning, tushare_warning) if warning]
         return {
             "ok": True,
             "message": "更新完成",
             "fetch_output": fetch_result.stdout[-2000:],
             "build_output": build_result.stdout[-2000:],
             "akshare_output": akshare_result.stdout[-2000:],
-            "warning": akshare_warning,
+            "tushare_output": tushare_output,
+            "warning": "\n".join(warnings),
         }

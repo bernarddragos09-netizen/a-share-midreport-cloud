@@ -460,7 +460,7 @@
     <section id="pageScreener" class="page">
       <div class="page-shell">
         <div class="screen-head">
-          <div><h1>股票筛选</h1><p class="muted">当前结果基于2026年中报及最新可用市场数据，财务指标由 AKShare 缓存提供。</p></div>
+          <div><h1>股票筛选</h1><p class="muted">当前结果基于2026年中报及最新可用市场数据，Tushare Pro 优先，AKShare 自动兜底。</p></div>
           <div class="segmented" aria-label="筛选模式">
             <button class="segment is-active" type="button" data-mode="simple">简易筛选</button>
             <button class="segment" type="button" data-mode="pro">专业筛选</button>
@@ -487,7 +487,7 @@
               <div class="check-line"><input id="revenueGrowth" type="checkbox"><span>营收增长率为正</span></div>
             </div>
             <div class="filter-group">
-              <label>AKShare 财务指标</label>
+              <label>财务指标</label>
               <div class="filter-row"><input id="roeMin" type="number" step="0.1" placeholder="ROE最低%"><span>且</span><input id="dividendYieldMin" type="number" step="0.1" placeholder="股息率最低%"></div>
               <div class="filter-row single"><input id="debtRatioMax" type="number" step="0.1" placeholder="资产负债率上限%"></div>
               <div class="check-line"><input id="positiveCashflow" type="checkbox"><span>经营现金流为正</span></div>
@@ -624,6 +624,17 @@
       return Number.isFinite(number) ? `${formatNumber(number / 100000000)}亿元` : '--';
     }
 
+    function sourceName(value) {
+      const source = String(value || '');
+      if (source.startsWith('Tushare Pro')) return 'Tushare Pro';
+      if (source.startsWith('AKShare')) return 'AKShare';
+      return source || '缓存数据';
+    }
+
+    function sourcePeriod(source, period) {
+      return period ? `${sourceName(source)} ${period}` : `${sourceName(source)} 暂无数据`;
+    }
+
     function growthClass(value) {
       if (value == null || value === '') return '';
       const number = Number(value);
@@ -698,7 +709,7 @@
     async function loadHome() {
       try {
         const data = await fetchJson('/api/home');
-        document.getElementById('homeMeta').textContent = `覆盖沪深A股 ${formatNumber(data.stock_count, 0)} 家 · ${data.report_period} · 更新于 ${data.generated_at}`;
+        document.getElementById('homeMeta').textContent = `覆盖沪深A股 ${formatNumber(data.stock_count, 0)} 家 · ${data.report_period} · ${data.data_provider || '缓存数据'} · 更新于 ${data.generated_at}`;
         document.getElementById('latestBody').innerHTML = data.latest.map(item => `
           <tr>
             <td><div class="stock-name"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.code)}</small></div></td>
@@ -784,11 +795,11 @@
             <td class="num">${item.market_cap_yi == null ? '--' : formatNumber(item.market_cap_yi) + '亿'}</td>
             <td class="num">${formatNumber(item.pe)}</td>
             <td class="num">${formatNumber(item.pb)}</td>
-            <td class="num" title="${escapeHtml(item.dividend_period ? 'AKShare ' + item.dividend_period : '暂无数据')}">${formatRate(item.dividend_yield)}</td>
-            <td class="num" title="${escapeHtml(item.financial_period ? 'AKShare ' + item.financial_period : '暂无数据')}">${formatRate(item.roe)}</td>
+            <td class="num" title="${escapeHtml(sourcePeriod(item.dividend_source, item.dividend_period))}">${formatRate(item.dividend_yield)}</td>
+            <td class="num" title="${escapeHtml(sourcePeriod(item.financial_source, item.financial_period))}">${formatRate(item.roe)}</td>
             <td class="${growthClass(item.revenue_growth)} num">${formatPct(item.revenue_growth)}</td>
             <td class="${growthClass(item.profit_growth)} num">${formatPct(item.profit_growth)}</td>
-            <td title="${escapeHtml(item.cashflow_period ? 'AKShare ' + item.cashflow_period : '暂无数据')}">${escapeHtml(item.cashflow_status || '--')}</td>
+            <td title="${escapeHtml(sourcePeriod(item.cashflow_source, item.cashflow_period))}">${escapeHtml(item.cashflow_status || '--')}</td>
             <td>${(item.risk_tags || []).map(tag => `<span class="risk-tag">${escapeHtml(tag)}</span>`).join(' ') || '--'}</td>
             <td><button class="table-action" type="button" data-preview-code="${escapeHtml(item.code)}">快速预览</button></td>
           </tr>`).join('') || '<tr><td colspan="12" class="empty-state">没有公司符合当前条件，请适当放宽筛选。</td></tr>';
@@ -933,9 +944,9 @@
         const valuation = item.pe == null ? '--' : item.pe > 0 && item.pe <= 20 ? '偏低' : item.pe <= 35 ? '适中' : '偏高';
         const cashflowQuality = item.cashflow_status === '经营现金流为正' ? '良好' : item.cashflow_status === '经营现金流为负' ? '偏弱' : '--';
         const debtQuality = item.debt_ratio == null ? '--' : item.debt_ratio <= 40 ? '稳健' : item.debt_ratio <= 60 ? '适中' : '偏高';
-        const metricPeriod = item.financial_period ? `AKShare ${item.financial_period}` : 'AKShare 暂无数据';
-        const balancePeriod = item.balance_period ? `AKShare ${item.balance_period}` : 'AKShare 暂无数据';
-        const cashflowPeriod = item.cashflow_period ? `AKShare ${item.cashflow_period}` : 'AKShare 暂无数据';
+        const metricPeriod = sourcePeriod(item.financial_source, item.financial_period);
+        const balancePeriod = sourcePeriod(item.balance_source || item.financial_source, item.balance_period);
+        const cashflowPeriod = sourcePeriod(item.cashflow_source, item.cashflow_period);
         const revenueValue = item.revenue_amount && item.revenue_amount !== '待披露' ? item.revenue_amount : formatAmountYi(item.financial_revenue);
         const profitValue = item.profit_amount && item.profit_amount !== '待披露' ? item.profit_amount : formatAmountYi(item.financial_net_profit);
         const revenueNote = item.revenue_amount && item.revenue_amount !== '待披露' ? (item.source || '最新可用数据') : metricPeriod;
@@ -954,7 +965,7 @@
           metricCard('毛利率', formatRate(item.gross_margin), null, metricPeriod),
           metricCard('经营现金流', formatAmountYi(item.operating_cashflow), null, cashflowPeriod),
           metricCard('资产负债率', formatRate(item.debt_ratio), null, balancePeriod),
-          metricCard('股息率', formatRate(item.dividend_yield), null, item.dividend_period ? `AKShare ${item.dividend_period}` : 'AKShare 暂无数据')
+          metricCard('股息率', formatRate(item.dividend_yield), null, sourcePeriod(item.dividend_source, item.dividend_period))
         ].join('');
         restoreScreeningContext(code);
         updateWatchButtons();

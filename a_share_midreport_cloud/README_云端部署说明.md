@@ -2,7 +2,7 @@
 
 这个目录用于部署“前端网站 + 云端后端”版本。部署后，别人打开一个网址即可使用页面，并且页面里的“抓取最新”“加载券商预测”都会请求云端 API，而不是你的电脑。
 
-股票筛选器的 ROE、毛利率、资产负债率、经营现金流和股息率由 AKShare 批量抓取后写入服务器快照，页面不会在用户访问时直接请求第三方网站。
+股票筛选器使用 Tushare Pro 优先、AKShare 兜底的数据策略。Tushare 提供全市场每日指标、财报披露计划以及已披露公司的财务指标；当前积分无法批量取得的项目继续由 AKShare 缓存补齐。页面不会在用户访问时直接请求第三方网站。
 
 ## 推荐部署：Render
 
@@ -72,9 +72,40 @@ ROE
 AKShare行业
 ```
 
+## Tushare Pro
+
+在 Render 的 `Environment` 中配置：
+
+```text
+TUSHARE_TOKEN=你的Tushare Token
+```
+
+不要把 Token 写进代码或提交到 GitHub。可选配置 `TUSHARE_FINANCIAL_LIMIT` 控制每次更新多少家已披露公司，默认 `80`。
+Render 每次部署时会自动尝试更新 Tushare 缓存；即使上游临时限流，也不会因此阻断网站部署。
+
+本地单独刷新 Tushare 缓存：
+
+```bash
+python fetch_tushare_metrics.py
+```
+
+当前 2000+ 积分方案使用：
+
+```text
+daily_basic        全市场价格、PE、PB、总市值和股息率
+disclosure_date    2026中报预约及实际披露日期
+fina_indicator     已披露公司的ROE、毛利率、资产负债率、扣非利润等
+```
+
+全市场财务报表 VIP 接口需要 5000 积分，因此目前由 Tushare 分批覆盖已披露公司，其余数据保留 AKShare 结果。更新顺序为：
+
+```text
+披露日历及行情 → AKShare完整底仓 → Tushare Pro覆盖
+```
+
 ## 注意
 
 - Render 免费服务可能会休眠，第一次打开会慢一点。
-- `POST /api/update` 会更新披露日历、行情快照和 AKShare 财务指标，通常需要约 3 至 5 分钟。
+- `POST /api/update` 会更新披露日历、行情快照、AKShare 财务底仓和 Tushare Pro 覆盖数据，通常需要约 3 至 5 分钟。
 - 如果上游网站临时限流，更新接口可能失败，稍后再点即可。
 - 当前页面覆盖沪深 A 股；AKShare 数据会保留明确的报告期，未披露中报的公司使用最新可用一季报，不会伪装成中报数据。
