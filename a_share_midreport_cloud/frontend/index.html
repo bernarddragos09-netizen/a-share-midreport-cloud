@@ -210,6 +210,8 @@
     .filter-sidebar-head { padding: 14px 16px; border-bottom: 1px solid var(--border-soft); font-weight: 800; }
     .filter-group { padding: 14px 16px; border-bottom: 1px solid var(--border-soft); }
     .filter-group label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 800; }
+    .pro-only { display: none; }
+    .filter-sidebar.is-pro .pro-only { display: block; }
     .filter-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
     .filter-row.single input { grid-column: 1 / -1; }
     .filter-row input, .filter-group select {
@@ -233,6 +235,7 @@
     .result-panel .data-table th:first-child { width: 112px; }
     .result-panel .data-table th:last-child { width: 68px; }
     .result-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .toolbar-actions, .workspace-actions, .inline-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
     .result-count strong { font-size: 20px; color: var(--brand-dark); }
     .selected-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
     .selected-filter { display: inline-flex; align-items: center; min-height: 28px; border-radius: 5px; background: var(--brand-soft); color: var(--brand-dark); padding: 0 8px; font-size: 12px; font-weight: 700; }
@@ -325,6 +328,24 @@
     .tool-button span { margin-top: 5px; color: var(--muted); font-size: 12px; }
     .async-panel { margin-top: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; padding: 16px; overflow-x: auto; }
     .async-panel:empty { display: none; }
+    .workspace-subtitle { margin: 5px 0 0; color: var(--muted); }
+    .summary-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 18px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: #fff; }
+    .summary-item { min-height: 88px; padding: 14px; border-right: 1px solid var(--border-soft); }
+    .summary-item:last-child { border-right: 0; }
+    .summary-item span, .summary-item strong { display: block; }
+    .summary-item span { color: var(--muted); font-size: 12px; }
+    .summary-item strong { margin-top: 8px; font-size: 20px; }
+    .workspace-empty { border: 1px dashed var(--border); border-radius: var(--radius); background: #fff; padding: 48px 20px; text-align: center; }
+    .workspace-empty h2 { margin: 0 0 8px; font-size: 19px; }
+    .workspace-empty p { margin: 0 0 18px; color: var(--muted); }
+    .workspace-table { overflow-x: hidden; }
+    .workspace-table .data-table { min-width: 0; table-layout: fixed; }
+    .workspace-table .data-table th, .workspace-table .data-table td { padding: 10px 9px; overflow-wrap: anywhere; }
+    .guide-list { display: grid; gap: 0; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; }
+    .guide-row { display: grid; grid-template-columns: 190px 1fr; gap: 18px; padding: 16px; border-bottom: 1px solid var(--border-soft); }
+    .guide-row:last-child { border-bottom: 0; }
+    .guide-row strong { font-size: 13px; }
+    .guide-row span { color: var(--muted); line-height: 1.7; }
     .toast { position: fixed; right: 20px; bottom: 20px; z-index: 100; max-width: 360px; border-radius: 6px; background: #24292f; color: #fff; padding: 11px 14px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: 160ms ease; }
     .toast.is-visible { opacity: 1; transform: translateY(0); }
 
@@ -334,6 +355,8 @@
       .utility-nav { display: none; }
       .industry-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .summary-item { border-bottom: 1px solid var(--border-soft); }
       .result-panel .data-table th:nth-child(5),
       .result-panel .data-table td:nth-child(5),
       .result-panel .data-table th:nth-child(8),
@@ -374,6 +397,14 @@
       .stock-title-row, .screening-context { grid-template-columns: 1fr; display: grid; }
       .stock-actions { flex-wrap: wrap; }
       .tool-grid { grid-template-columns: 1fr 1fr; }
+      .result-toolbar { align-items: stretch; flex-direction: column; }
+      .toolbar-actions { justify-content: space-between; }
+      .summary-strip { grid-template-columns: 1fr 1fr; }
+      .guide-row { grid-template-columns: 1fr; gap: 5px; }
+      .workspace-table .data-table th:nth-child(4), .workspace-table .data-table td:nth-child(4),
+      .workspace-table .data-table th:nth-child(5), .workspace-table .data-table td:nth-child(5),
+      .workspace-table .data-table th:nth-child(7), .workspace-table .data-table td:nth-child(7) { display: none; }
+      .workspace-table .inline-actions { align-items: start; flex-direction: column; gap: 2px; }
     }
   </style>
 </head>
@@ -496,13 +527,26 @@
               <label>现金流与风险</label>
               <div class="check-line"><input id="excludeSt" type="checkbox" checked><span>排除ST及退市风险</span></div>
             </div>
+            <div class="filter-group pro-only">
+              <label for="marketFilter">上市市场</label>
+              <select id="marketFilter"><option value="">沪深A股</option><option value="沪市">沪市</option><option value="深市">深市</option></select>
+            </div>
+            <div class="filter-group pro-only">
+              <label>专业估值与成长</label>
+              <div class="filter-row"><input id="pbMax" type="number" step="0.1" placeholder="PB上限"><span>且</span><input id="deductGrowthMin" type="number" step="0.1" placeholder="扣非增长下限%"></div>
+            </div>
+            <div class="filter-group pro-only">
+              <label>数据状态与现金流</label>
+              <select id="sourceFilter"><option value="">全部数据状态</option><option value="正式中报">正式中报</option><option value="业绩预告">业绩预告</option><option value="待披露">待披露</option></select>
+              <select id="cashflowFilter" style="margin-top:8px"><option value="">不限现金流</option><option value="positive">经营现金流为正</option><option value="negative">经营现金流为负</option></select>
+            </div>
             <div class="filter-actions"><button id="resetFilters" class="secondary-button" type="button">重置</button><button id="applyFilters" class="primary-button" type="button">筛选</button></div>
           </aside>
 
           <section class="result-panel">
             <div class="result-toolbar">
               <div class="result-count">已找到 <strong id="resultCount" class="num">--</strong> 只股票</div>
-              <div><select id="sortSelect" aria-label="排序方式"><option value="profit_growth:desc">净利润增长：高到低</option><option value="profit_growth:asc">净利润增长：低到高</option><option value="roe:desc">ROE：高到低</option><option value="dividend_yield:desc">股息率：高到低</option><option value="debt_ratio:asc">资产负债率：低到高</option><option value="market_cap:desc">总市值：大到小</option><option value="market_cap:asc">总市值：小到大</option><option value="date:asc">披露日期：早到晚</option></select> <button id="saveStrategy" class="secondary-button" type="button">保存方案</button></div>
+              <div class="toolbar-actions"><select id="sortSelect" aria-label="排序方式"><option value="profit_growth:desc">净利润增长：高到低</option><option value="profit_growth:asc">净利润增长：低到高</option><option value="roe:desc">ROE：高到低</option><option value="dividend_yield:desc">股息率：高到低</option><option value="debt_ratio:asc">资产负债率：低到高</option><option value="market_cap:desc">总市值：大到小</option><option value="market_cap:asc">总市值：小到大</option><option value="date:asc">披露日期：早到晚</option></select><button id="compareEntry" class="secondary-button" type="button">对比 (0)</button><button id="exportResults" class="secondary-button" type="button">导出当前页</button><button id="saveStrategy" class="secondary-button" type="button">保存方案</button></div>
             </div>
             <div id="selectedFilters" class="selected-filters"></div>
             <div class="data-table-wrap">
@@ -532,7 +576,7 @@
             <div class="market-item"><span>披露日期</span><strong id="stockDate" class="num">--</strong></div>
           </div>
           <nav class="stock-tabs" aria-label="个股财报导航">
-            <button class="stock-tab is-active" type="button">公司概览</button><button class="stock-tab" type="button">财务摘要</button><button class="stock-tab" type="button">财务趋势</button><button class="stock-tab" type="button">利润表</button><button class="stock-tab" type="button">资产负债表</button><button class="stock-tab" type="button">现金流量表</button><button class="stock-tab" type="button">估值分析</button><button class="stock-tab" type="button">同行对比</button><button class="stock-tab" type="button">风险提示</button>
+            <button class="stock-tab is-active" type="button" data-stock-tab="overview">公司概览</button><button class="stock-tab" type="button" data-stock-tab="summary">财务摘要</button><button class="stock-tab" type="button" data-stock-tab="trends">财务趋势</button><button class="stock-tab" type="button" data-stock-tab="profit">利润表</button><button class="stock-tab" type="button" data-stock-tab="balance">资产负债表</button><button class="stock-tab" type="button" data-stock-tab="cashflow">现金流量表</button><button class="stock-tab" type="button" data-stock-tab="valuation">估值分析</button><button class="stock-tab" type="button" data-stock-tab="peers">同行对比</button><button class="stock-tab" type="button" data-stock-tab="risk">风险提示</button>
           </nav>
         </div>
       </div>
@@ -564,7 +608,7 @@
       </div>
     </section>
 
-    <section id="pagePlaceholder" class="page"><div class="page-shell"><div class="screen-head"><div><h1 id="placeholderTitle">行业对比</h1><p class="muted">该模块将在第二阶段接入。</p></div></div></div></section>
+    <section id="pageWorkspace" class="page"><div class="page-shell"><div class="screen-head"><div><h1 id="workspaceTitle">正在加载</h1><p id="workspaceSubtitle" class="workspace-subtitle"></p></div><div id="workspaceActions" class="workspace-actions"></div></div><div id="workspaceBody"></div></div></section>
   </main>
 
   <div id="drawerBackdrop" class="drawer-backdrop"></div>
@@ -585,7 +629,7 @@
       home: document.getElementById('pageHome'),
       screener: document.getElementById('pageScreener'),
       stock: document.getElementById('pageStock'),
-      placeholder: document.getElementById('pagePlaceholder')
+      workspace: document.getElementById('pageWorkspace')
     };
     const drawer = document.getElementById('previewDrawer');
     const drawerBackdrop = document.getElementById('drawerBackdrop');
@@ -593,6 +637,8 @@
     const apiCache = new Map();
     let activeStock = '';
     let currentStock = null;
+    let currentPeers = [];
+    let lastScreenerItems = [];
     let searchTimer = null;
     let toastTimer = null;
 
@@ -665,6 +711,7 @@
       if (route === 'stock') return `/stock/${encodeURIComponent(value || activeStock)}`;
       if (route === 'industry') return `/industry/${encodeURIComponent(value || '概览')}`;
       if (route === 'watchlist') return '/watchlist';
+      if (route === 'compare') return '/compare';
       if (route === 'data-guide') return '/data-guide';
       return '/';
     }
@@ -680,12 +727,13 @@
       if (path.startsWith('/stock/')) return 'stock';
       if (path.startsWith('/industry/')) return 'industry';
       if (path.startsWith('/watchlist')) return 'watchlist';
+      if (path.startsWith('/compare')) return 'compare';
       if (path.startsWith('/data-guide')) return 'data-guide';
       return 'home';
     }
 
     function setActivePage(route) {
-      const target = ['home', 'screener', 'stock'].includes(route) ? route : 'placeholder';
+      const target = ['home', 'screener', 'stock'].includes(route) ? route : 'workspace';
       Object.values(pages).forEach(page => page.classList.remove('is-active'));
       pages[target].classList.add('is-active');
       document.querySelectorAll('.nav-button').forEach(button => {
@@ -701,9 +749,10 @@
       if (route === 'home') await loadHome();
       if (route === 'screener') await loadScreener();
       if (route === 'stock') await loadStock(decodeURIComponent(location.pathname.split('/').pop() || ''));
-      if (route === 'industry') renderPlaceholder('行业对比', '行业横向指标与公司排名将在第二阶段接入。');
-      if (route === 'watchlist') renderWatchlist();
-      if (route === 'data-guide') renderPlaceholder('数据说明', '预约披露时间与财务摘要来自公开市场数据，行情估值为最新可用值。');
+      if (route === 'industry') await loadIndustry(decodeURIComponent(location.pathname.split('/').pop() || '概览'));
+      if (route === 'watchlist') await loadWatchlist();
+      if (route === 'compare') await loadCompare();
+      if (route === 'data-guide') await loadDataGuide();
     }
 
     async function loadHome() {
@@ -749,27 +798,37 @@
       document.getElementById('debtRatioMax').value = params.get('debt_ratio_max') || '';
       document.getElementById('positiveCashflow').checked = params.get('cashflow') === 'positive';
       document.getElementById('excludeSt').checked = params.get('exclude_st') !== 'false';
+      document.getElementById('marketFilter').value = params.get('market') || '';
+      document.getElementById('pbMax').value = params.get('pb_max') || '';
+      document.getElementById('deductGrowthMin').value = params.get('deduct_growth_min') || '';
+      document.getElementById('sourceFilter').value = params.get('source') || '';
+      document.getElementById('cashflowFilter').value = params.get('cashflow') || '';
       const sort = params.get('sort') || 'profit_growth';
       const order = params.get('order') || 'desc';
       document.getElementById('sortSelect').value = `${sort}:${order}`;
       const mode = params.get('mode') || 'simple';
       document.querySelectorAll('[data-mode]').forEach(button => button.classList.toggle('is-active', button.dataset.mode === mode));
+      document.querySelector('.filter-sidebar').classList.toggle('is-pro', mode === 'pro');
     }
 
     function renderFilterChips(params) {
       const chips = [];
       if (params.get('preset')) chips.push(`方案：${params.get('preset')}`);
       if (params.get('sector')) chips.push(`行业：${params.get('sector')}`);
+      if (params.get('market')) chips.push(`市场：${params.get('market')}`);
       if (params.get('pe_min')) chips.push(`PE ≥ ${params.get('pe_min')}`);
       if (params.get('pe_max')) chips.push(`PE ≤ ${params.get('pe_max')}`);
+      if (params.get('pb_max')) chips.push(`PB ≤ ${params.get('pb_max')}`);
       if (params.get('market_cap_min')) chips.push(`市值 ≥ ${params.get('market_cap_min')}亿`);
       if (params.get('market_cap_max')) chips.push(`市值 ≤ ${params.get('market_cap_max')}亿`);
       if (params.get('profit_growth_min')) chips.push(`净利润增长 ≥ ${params.get('profit_growth_min')}%`);
+      if (params.get('deduct_growth_min')) chips.push(`扣非增长 ≥ ${params.get('deduct_growth_min')}%`);
       if (params.get('revenue_growth_min')) chips.push(`营收增长 ≥ ${params.get('revenue_growth_min')}%`);
       if (params.get('roe_min')) chips.push(`ROE ≥ ${params.get('roe_min')}%`);
       if (params.get('dividend_yield_min')) chips.push(`股息率 ≥ ${params.get('dividend_yield_min')}%`);
       if (params.get('debt_ratio_max')) chips.push(`资产负债率 ≤ ${params.get('debt_ratio_max')}%`);
       if (params.get('cashflow') === 'positive') chips.push('经营现金流为正');
+      if (params.get('cashflow') === 'negative') chips.push('经营现金流为负');
       if (params.get('source')) chips.push(`数据：${params.get('source')}`);
       if (params.get('exclude_st') !== 'false') chips.push('排除ST');
       document.getElementById('selectedFilters').innerHTML = chips.map(text => `<span class="selected-filter">${escapeHtml(text)}</span>`).join('');
@@ -778,6 +837,7 @@
 
     async function loadScreener() {
       const params = currentParams();
+      updateWatchButtons();
       await ensureIndustryOptions();
       syncFilterControls(params);
       renderFilterChips(params);
@@ -787,7 +847,9 @@
       apiParams.delete('preset');
       try {
         const data = await fetchJson(`/api/screener?${apiParams.toString()}`, { noCache: true });
+        lastScreenerItems = data.items;
         document.getElementById('resultCount').textContent = formatNumber(data.total, 0);
+        document.getElementById('selectionSummary').textContent = `当前页 ${data.items.length} 只 · 可加入对比、自选或导出`;
         document.getElementById('screenerBody').innerHTML = data.items.map(item => `
           <tr>
             <td><div class="stock-name"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.code)}</small></div></td>
@@ -827,6 +889,7 @@
 
     function applyFilters() {
       const params = new URLSearchParams();
+      const mode = document.querySelector('[data-mode].is-active')?.dataset.mode || 'simple';
       const sector = document.getElementById('industryFilter').value;
       const peMin = document.getElementById('peMin').value;
       const peMax = document.getElementById('peMax').value;
@@ -846,6 +909,19 @@
       if (dividendYieldMin) params.set('dividend_yield_min', dividendYieldMin);
       if (debtRatioMax) params.set('debt_ratio_max', debtRatioMax);
       if (document.getElementById('positiveCashflow').checked) params.set('cashflow', 'positive');
+      if (mode === 'pro') {
+        const market = document.getElementById('marketFilter').value;
+        const pbMax = document.getElementById('pbMax').value;
+        const deductGrowthMin = document.getElementById('deductGrowthMin').value;
+        const source = document.getElementById('sourceFilter').value;
+        const cashflow = document.getElementById('cashflowFilter').value;
+        if (market) params.set('market', market);
+        if (pbMax) params.set('pb_max', pbMax);
+        if (deductGrowthMin) params.set('deduct_growth_min', deductGrowthMin);
+        if (source) params.set('source', source);
+        if (cashflow) params.set('cashflow', cashflow);
+        params.set('mode', 'pro');
+      }
       params.set('exclude_st', String(document.getElementById('excludeSt').checked));
       const [sort, order] = document.getElementById('sortSelect').value.split(':');
       params.set('sort', sort);
@@ -929,6 +1005,8 @@
         const data = await fetchJson(`/api/stock/${encodeURIComponent(code)}`, { noCache: true });
         const item = data.stock;
         currentStock = item;
+        currentPeers = data.peers || [];
+        document.querySelectorAll('[data-stock-tab]').forEach(button => button.classList.toggle('is-active', button.dataset.stockTab === 'overview'));
         document.title = `${item.name} ${item.code} - A股财报云`;
         document.getElementById('stockPageName').textContent = `${item.name} ${item.code}`;
         document.getElementById('stockPageSubline').textContent = `${(item.sectors || []).join(' · ') || '综合'}｜总市值 ${item.market_cap_yi == null ? '--' : formatNumber(item.market_cap_yi) + '亿元'}｜最新报告期：2026中报`;
@@ -987,7 +1065,7 @@
       document.getElementById('screeningContextConditions').innerHTML = context.conditions.map(text => `<span>${escapeHtml(text)}</span>`).join('');
     }
 
-    async function loadAnalysis(kind) {
+    async function loadAnalysis(kind, section = '') {
       if (!activeStock) return;
       const panel = document.getElementById('analysisPanel');
       const labels = { financials: '三大财务报表', business: '主营构成分析', broker: '券商预测', dividends: '分红历史' };
@@ -995,9 +1073,52 @@
       try {
         const data = await fetchJson(`/api/${kind}?code=${encodeURIComponent(activeStock)}&_=${Date.now()}`, { noCache: true });
         panel.innerHTML = data.html || `暂无${labels[kind]}数据`;
-        window.scrollTo({ top: Math.max(0, panel.offsetTop - 90), behavior: 'smooth' });
+        let target = panel;
+        const sectionLabels = { trends: '趋势', profit: '利润表', balance: '资产负债表', cashflow: '现金流量表' };
+        if (sectionLabels[section]) {
+          target = [...panel.querySelectorAll('h1,h2,h3')].find(node => node.textContent.includes(sectionLabels[section])) || panel;
+        }
+        const targetTop = target === panel ? panel.offsetTop : panel.offsetTop + target.offsetTop;
+        window.scrollTo({ top: Math.max(0, targetTop - 100), behavior: 'smooth' });
       } catch (error) {
         panel.textContent = `无法加载${labels[kind]}：${error.message}`;
+      }
+    }
+
+    function renderStockSubview(tab) {
+      const panel = document.getElementById('analysisPanel');
+      if (tab === 'overview') {
+        panel.innerHTML = '';
+        window.scrollTo({ top: Math.max(0, document.getElementById('scoreGrid').offsetTop - 130), behavior: 'smooth' });
+        return;
+      }
+      if (tab === 'summary') {
+        panel.innerHTML = '';
+        window.scrollTo({ top: Math.max(0, document.getElementById('metricGrid').offsetTop - 130), behavior: 'smooth' });
+        return;
+      }
+      if (['trends', 'profit', 'balance', 'cashflow'].includes(tab)) {
+        loadAnalysis('financials', tab);
+        return;
+      }
+      if (tab === 'valuation') {
+        panel.innerHTML = `<div class="section-title-row"><div><h2>估值分析</h2><p>最新可用行情估值，不替代完整估值模型。</p></div></div>${summaryStrip([
+          { label: '总市值', value: currentStock?.market_cap_yi == null ? '--' : `${formatNumber(currentStock.market_cap_yi)}亿元` },
+          { label: 'PE', value: formatNumber(currentStock?.pe) },
+          { label: 'PB', value: formatNumber(currentStock?.pb) },
+          { label: '股息率', value: formatRate(currentStock?.dividend_yield) },
+          { label: 'ROE', value: formatRate(currentStock?.roe) }
+        ])}`;
+      }
+      if (tab === 'peers') {
+        panel.innerHTML = `<div class="section-title-row"><div><h2>同行对比</h2><p>同一主要板块中净利润增长较高的公司。</p></div><button class="text-link" type="button" data-industry-name="${escapeHtml(currentStock?.sectors?.[0] || '概览')}">查看完整行业</button></div>${currentPeers.length ? workspaceStockTable(currentPeers) : '<div class="empty-state">暂无同行数据</div>'}`;
+      }
+      if (tab === 'risk') {
+        const risks = currentStock?.risk_tags?.length ? currentStock.risk_tags : ['暂无结构化风险标签'];
+        panel.innerHTML = `<div class="section-title-row"><div><h2>风险提示</h2><p>基于最新可用结构化财务数据自动识别。</p></div></div><div class="guide-list">${risks.map(item => `<div class="guide-row"><strong>${escapeHtml(item)}</strong><span>请结合正式财报、交易所公告和行业周期继续核验。</span></div>`).join('')}<div class="guide-row"><strong>数据时点</strong><span>利润表：${escapeHtml(sourcePeriod(currentStock?.financial_source, currentStock?.financial_period))}；资产负债表：${escapeHtml(sourcePeriod(currentStock?.balance_source, currentStock?.balance_period))}。</span></div></div>`;
+      }
+      if (['valuation', 'peers', 'risk'].includes(tab)) {
+        window.scrollTo({ top: Math.max(0, panel.offsetTop - 100), behavior: 'smooth' });
       }
     }
 
@@ -1021,6 +1142,10 @@
 
     function toggleSaved(key, code) {
       const values = new Set(savedCodes(key));
+      if (key === 'compareCodes' && !values.has(code) && values.size >= 8) {
+        showToast('一次最多对比8只股票');
+        return;
+      }
       values.has(code) ? values.delete(code) : values.add(code);
       localStorage.setItem(key, JSON.stringify([...values]));
       updateWatchButtons();
@@ -1029,29 +1154,158 @@
 
     function updateWatchButtons() {
       const watched = new Set(savedCodes('watchlist'));
+      const compared = new Set(savedCodes('compareCodes'));
       document.getElementById('stockWatch').textContent = watched.has(activeStock) ? '移出自选' : '加入自选';
       document.getElementById('drawerWatch').textContent = watched.has(activeStock) ? '移出自选' : '加入自选';
+      document.getElementById('stockCompare').textContent = compared.has(activeStock) ? '移出对比' : '加入对比';
+      const compareEntry = document.getElementById('compareEntry');
+      if (compareEntry) compareEntry.textContent = `对比 (${compared.size})`;
     }
 
-    function renderWatchlist() {
+    function setWorkspace(title, subtitle, actions = '') {
+      document.getElementById('workspaceTitle').textContent = title;
+      document.getElementById('workspaceSubtitle').textContent = subtitle;
+      document.getElementById('workspaceActions').innerHTML = actions;
+      document.getElementById('workspaceBody').innerHTML = '<div class="loading-row">正在加载数据...</div>';
+    }
+
+    function workspaceStockTable(items, removeType = '') {
+      const action = item => `
+        <div class="inline-actions">
+          <button class="table-action" type="button" data-view-code="${escapeHtml(item.code)}">查看财报</button>
+          ${removeType ? `<button class="table-action" type="button" data-remove-${removeType}="${escapeHtml(item.code)}">移除</button>` : `<button class="table-action" type="button" data-add-compare="${escapeHtml(item.code)}">加入对比</button>`}
+        </div>`;
+      return `<div class="data-table-wrap workspace-table"><table class="data-table"><thead><tr><th>股票</th><th>行业</th><th>总市值</th><th>PE</th><th>PB</th><th>ROE</th><th>股息率</th><th>净利润增长</th><th>操作</th></tr></thead><tbody>${items.map(item => `
+        <tr><td><div class="stock-name"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.code)}</small></div></td><td>${escapeHtml((item.sectors || []).slice(0, 2).join(' · ') || '综合')}</td><td class="num">${item.market_cap_yi == null ? '--' : formatNumber(item.market_cap_yi) + '亿'}</td><td class="num">${formatNumber(item.pe)}</td><td class="num">${formatNumber(item.pb)}</td><td class="num">${formatRate(item.roe)}</td><td class="num">${formatRate(item.dividend_yield)}</td><td class="${growthClass(item.profit_growth)} num">${formatPct(item.profit_growth)}</td><td>${action(item)}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+
+    function summaryStrip(values) {
+      return `<div class="summary-strip">${values.map(item => `<div class="summary-item"><span>${escapeHtml(item.label)}</span><strong class="${item.className || ''} num">${escapeHtml(item.value)}</strong></div>`).join('')}</div>`;
+    }
+
+    async function loadIndustry(name) {
+      if (!name || name === '概览') {
+        setWorkspace('行业对比', '使用行业中位数减少极端值干扰，点击行业查看公司排名。', '<button class="secondary-button" type="button" data-route="screener">进入股票筛选</button>');
+        try {
+          const data = await fetchJson('/api/industries');
+          document.getElementById('workspaceBody').innerHTML = `<div class="data-table-wrap workspace-table"><table class="data-table"><thead><tr><th>行业</th><th>公司数</th><th>PE中位数</th><th>ROE中位数</th><th>利润增长中位数</th><th>股息率中位数</th><th>操作</th></tr></thead><tbody>${data.items.map(item => `<tr><td><strong>${escapeHtml(item.name)}</strong></td><td class="num">${formatNumber(item.count, 0)}</td><td class="num">${formatNumber(item.median_pe)}</td><td class="num">${formatRate(item.median_roe)}</td><td class="${growthClass(item.median_profit_growth)} num">${formatPct(item.median_profit_growth)}</td><td class="num">${formatRate(item.median_dividend_yield)}</td><td><button class="table-action" type="button" data-industry-name="${escapeHtml(item.name)}">查看排名</button></td></tr>`).join('')}</tbody></table></div>`;
+        } catch (error) {
+          document.getElementById('workspaceBody').innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+        }
+        return;
+      }
+      setWorkspace(name, '按最新可用净利润增长率排序，未披露增长率的公司排在后面。', `<button class="secondary-button" type="button" data-industry-name="概览">返回行业列表</button><button class="primary-button" type="button" data-industry-screen="${escapeHtml(name)}">筛选本行业</button>`);
+      try {
+        const data = await fetchJson(`/api/industry?name=${encodeURIComponent(name)}&limit=100`);
+        const s = data.summary;
+        document.getElementById('workspaceBody').innerHTML = summaryStrip([
+          { label: '公司数量', value: `${formatNumber(s.count, 0)}家` },
+          { label: 'PE中位数', value: formatNumber(s.median_pe) },
+          { label: 'ROE中位数', value: formatRate(s.median_roe) },
+          { label: '利润增长中位数', value: formatPct(s.median_profit_growth), className: growthClass(s.median_profit_growth) },
+          { label: '资产负债率中位数', value: formatRate(s.median_debt_ratio) }
+        ]) + workspaceStockTable(data.items);
+      } catch (error) {
+        document.getElementById('workspaceBody').innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function loadWatchlist() {
       const codes = savedCodes('watchlist');
-      renderPlaceholder('自选股', codes.length ? `已保存 ${codes.length} 只股票：${codes.join('、')}` : '暂未添加自选股，可在快速预览或个股页加入。');
+      setWorkspace('自选股', '自选记录保存在当前浏览器，财务数据读取最新云端快照。', codes.length ? '<button class="primary-button" type="button" data-compare-watchlist>对比全部自选</button>' : '');
+      if (!codes.length) {
+        document.getElementById('workspaceBody').innerHTML = '<div class="workspace-empty"><h2>还没有自选股票</h2><p>可从筛选结果、快速预览或个股页加入。</p><button class="primary-button" type="button" data-route="screener">开始筛选股票</button></div>';
+        return;
+      }
+      try {
+        const data = await fetchJson(`/api/compare?codes=${encodeURIComponent(codes.slice(0, 100).join(','))}`, { noCache: true });
+        document.getElementById('workspaceBody').innerHTML = workspaceStockTable(data.items, 'watch');
+      } catch (error) {
+        document.getElementById('workspaceBody').innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+      }
     }
 
-    function renderPlaceholder(title, description) {
-      document.getElementById('placeholderTitle').textContent = title;
-      document.querySelector('#pagePlaceholder .muted').textContent = description;
+    async function loadCompare() {
+      const codes = savedCodes('compareCodes').slice(0, 8);
+      setWorkspace('股票对比', '最多同时比较8家公司，指标使用各公司最新可用报告期。', codes.length ? '<button class="secondary-button" type="button" data-clear-compare>清空对比</button>' : '');
+      if (!codes.length) {
+        document.getElementById('workspaceBody').innerHTML = '<div class="workspace-empty"><h2>对比列表为空</h2><p>在筛选结果或个股页加入公司后，这里会并列展示核心指标。</p><button class="primary-button" type="button" data-route="screener">选择公司</button></div>';
+        return;
+      }
+      try {
+        const data = await fetchJson(`/api/compare?codes=${encodeURIComponent(codes.join(','))}`, { noCache: true });
+        document.getElementById('workspaceBody').innerHTML = workspaceStockTable(data.items, 'compare');
+      } catch (error) {
+        document.getElementById('workspaceBody').innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function loadDataGuide() {
+      setWorkspace('数据说明', '查看网站当前数据链路、更新时间与口径。');
+      try {
+        const data = await fetchJson('/api/health', { noCache: true });
+        document.getElementById('workspaceBody').innerHTML = `<div class="guide-list">
+          <div class="guide-row"><strong>当前数据源</strong><span>${escapeHtml(data.data_provider || '缓存数据')}。Tushare Pro 可用时优先，接口缺失或异常时由 AKShare 兜底。</span></div>
+          <div class="guide-row"><strong>股票覆盖</strong><span>沪深A股 ${formatNumber(data.stock_count, 0)} 家，财务摘要 ${formatNumber(data.fundamental_count, 0)} 家。</span></div>
+          <div class="guide-row"><strong>快照时间</strong><span>${escapeHtml(data.generated_at || '--')}（北京时间）。Tushare 最近更新：${escapeHtml(data.tushare_generated_at || '未配置')}。</span></div>
+          <div class="guide-row"><strong>指标口径</strong><span>估值和市值取最新可用行情；利润、现金流、资产负债等指标分别标注其最新可用报告期，不把不同报告期伪装成同一期。</span></div>
+          <div class="guide-row"><strong>使用边界</strong><span>页面用于财报研究与数据整理，不构成投资建议。正式数据以交易所和上市公司公告为准。</span></div>
+        </div>`;
+      } catch (error) {
+        document.getElementById('workspaceBody').innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function exportScreenerCsv() {
+      if (!lastScreenerItems.length) { showToast('当前页没有可导出的数据'); return; }
+      const headers = ['股票代码', '股票名称', '行业', '总市值(亿元)', 'PE', 'PB', '股息率(%)', 'ROE(%)', '营收增长(%)', '净利润增长(%)', '经营现金流', '披露日期'];
+      const rows = lastScreenerItems.map(item => [item.code, item.name, (item.sectors || []).join('/'), item.market_cap_yi, item.pe, item.pb, item.dividend_yield, item.roe, item.revenue_growth, item.profit_growth, item.cashflow_status, item.actual_date || item.date]);
+      const csv = '\ufeff' + [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `A股财报筛选_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast('已导出当前页CSV');
     }
 
     document.addEventListener('click', event => {
+      const stockTab = event.target.closest('[data-stock-tab]');
+      if (stockTab) {
+        document.querySelectorAll('[data-stock-tab]').forEach(button => button.classList.toggle('is-active', button === stockTab));
+        renderStockSubview(stockTab.dataset.stockTab);
+        return;
+      }
       const searchButton = event.target.closest('[data-search-code]');
       if (searchButton) { searchResults.classList.remove('is-open'); navigate('stock', searchButton.dataset.searchCode); return; }
+      const viewButton = event.target.closest('[data-view-code]');
+      if (viewButton) { navigate('stock', viewButton.dataset.viewCode); return; }
       const routeButton = event.target.closest('[data-route]');
       if (routeButton) { navigate(routeButton.dataset.route); return; }
       const previewButton = event.target.closest('[data-preview-code]');
       if (previewButton) { openPreview(previewButton.dataset.previewCode); return; }
       const industryButton = event.target.closest('[data-industry]');
-      if (industryButton) { navigate('screener', '', `?sector=${encodeURIComponent(industryButton.dataset.industry)}&page=1`); return; }
+      if (industryButton) { navigate('industry', industryButton.dataset.industry); return; }
+      const industryName = event.target.closest('[data-industry-name]');
+      if (industryName) { navigate('industry', industryName.dataset.industryName); return; }
+      const industryScreen = event.target.closest('[data-industry-screen]');
+      if (industryScreen) { navigate('screener', '', `?sector=${encodeURIComponent(industryScreen.dataset.industryScreen)}&page=1`); return; }
+      const addCompare = event.target.closest('[data-add-compare]');
+      if (addCompare) { toggleSaved('compareCodes', addCompare.dataset.addCompare); return; }
+      const removeWatch = event.target.closest('[data-remove-watch]');
+      if (removeWatch) { toggleSaved('watchlist', removeWatch.dataset.removeWatch); loadWatchlist(); return; }
+      const removeCompare = event.target.closest('[data-remove-compare]');
+      if (removeCompare) { toggleSaved('compareCodes', removeCompare.dataset.removeCompare); loadCompare(); return; }
+      if (event.target.closest('[data-clear-compare]')) { localStorage.setItem('compareCodes', '[]'); updateWatchButtons(); loadCompare(); return; }
+      if (event.target.closest('[data-compare-watchlist]')) {
+        localStorage.setItem('compareCodes', JSON.stringify(savedCodes('watchlist').slice(0, 8)));
+        updateWatchButtons();
+        navigate('compare');
+        return;
+      }
       const pageButton = event.target.closest('[data-page]');
       if (pageButton) {
         const params = currentParams();
@@ -1075,18 +1329,29 @@
 
     document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
       const params = currentParams();
-      params.set('mode', button.dataset.mode);
+      params.set('page', '1');
+      if (button.dataset.mode === 'pro') {
+        params.set('mode', 'pro');
+      } else {
+        ['mode', 'market', 'pb_max', 'deduct_growth_min', 'source'].forEach(key => params.delete(key));
+        if (params.get('cashflow') === 'negative') params.delete('cashflow');
+      }
       navigate('screener', '', `?${params.toString()}`);
     }));
 
     document.getElementById('applyFilters').addEventListener('click', applyFilters);
     document.getElementById('resetFilters').addEventListener('click', () => navigate('screener'));
     document.getElementById('sortSelect').addEventListener('change', applyFilters);
+    document.getElementById('compareEntry').addEventListener('click', () => {
+      if (!savedCodes('compareCodes').length) { showToast('请先在个股页或列表中加入对比'); return; }
+      navigate('compare');
+    });
+    document.getElementById('exportResults').addEventListener('click', exportScreenerCsv);
     document.getElementById('saveStrategy').addEventListener('click', () => {
       localStorage.setItem('savedScreener', location.search);
       showToast('筛选方案已保存在当前浏览器');
     });
-    document.getElementById('loginButton').addEventListener('click', () => showToast('登录与云端同步将在第二阶段开放'));
+    document.getElementById('loginButton').addEventListener('click', () => showToast('账号系统尚未接入，当前自选保存在本机浏览器'));
     document.getElementById('closeDrawer').addEventListener('click', closePreview);
     drawerBackdrop.addEventListener('click', closePreview);
     document.getElementById('openFullReport').addEventListener('click', () => {

@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import statistics
 import subprocess
 import sys
 from collections import Counter
@@ -181,6 +182,43 @@ def _matches_query(stock: dict[str, Any], query: str) -> bool:
     )
 
 
+def _public_stocks_for_codes(codes: list[str]) -> list[dict[str, Any]]:
+    _, stock_index = _load_snapshot()
+    quotes = _fetch_quote_snapshot()
+    fundamentals = _fetch_fundamental_snapshot()
+    return [
+        _public_stock(stock_index[code], quotes.get(code), fundamentals.get(code))
+        for code in codes
+        if code in stock_index
+    ]
+
+
+def _median_metric(
+    items: list[dict[str, Any]], key: str, *, positive_only: bool = False
+) -> float | None:
+    values = [
+        value
+        for item in items
+        if (value := _safe_float(item.get(key))) is not None
+        and (not positive_only or value > 0)
+    ]
+    return round(statistics.median(values), 2) if values else None
+
+
+def _industry_summary(name: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "name": name,
+        "count": len(items),
+        "median_pe": _median_metric(items, "pe", positive_only=True),
+        "median_pb": _median_metric(items, "pb", positive_only=True),
+        "median_roe": _median_metric(items, "roe"),
+        "median_revenue_growth": _median_metric(items, "revenue_growth"),
+        "median_profit_growth": _median_metric(items, "profit_growth"),
+        "median_dividend_yield": _median_metric(items, "dividend_yield"),
+        "median_debt_ratio": _median_metric(items, "debt_ratio"),
+    }
+
+
 def _frontend() -> FileResponse:
     if not FRONTEND_INDEX.exists():
         raise HTTPException(status_code=500, detail="frontend/index.html has not been built")
@@ -209,6 +247,11 @@ def industry_page(name: str) -> FileResponse:
 
 @app.get("/watchlist")
 def watchlist_page() -> FileResponse:
+    return _frontend()
+
+
+@app.get("/compare")
+def compare_page() -> FileResponse:
     return _frontend()
 
 
@@ -453,6 +496,72 @@ def screen_stocks(
     }
 
 
+@app.get("/api/compare")
+def compare_stocks(
+    response: Response,
+    codes: str = Query(min_length=1, max_length=800),
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    requested: list[str] = []
+    for value in codes.split(","):
+        code = value.strip()
+        if code and code not in requested:
+            requested.append(code)
+    if len(requested) > 100:
+        raise HTTPException(status_code=400, detail="一次最多读取100只股票")
+    items = _public_stocks_for_codes(requested)
+    return {"ok": True, "items": items, "requested": requested}
+
+
+@app.get("/api/industries")
+def industry_summaries(response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "public, max-age=300"
+    _, stock_index = _load_snapshot()
+    quotes = _fetch_quote_snapshot()
+    fundamentals = _fetch_fundamental_snapshot()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for stock in stock_index.values():
+        code = str(stock.get("code", ""))
+        item = _public_stock(stock, quotes.get(code), fundamentals.get(code))
+        for sector in stock.get("sectors") or []:
+            if sector and sector != "综合":
+                grouped.setdefault(str(sector), []).append(item)
+    summaries = [_industry_summary(name, items) for name, items in grouped.items()]
+    summaries.sort(key=lambda item: (-int(item["count"]), str(item["name"])))
+    return {"ok": True, "items": summaries}
+
+
+@app.get("/api/industry")
+def industry_detail(
+    response: Response,
+    name: str = Query(min_length=1, max_length=30),
+    limit: int = Query(default=50, ge=10, le=100),
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "public, max-age=180"
+    _, stock_index = _load_snapshot()
+    quotes = _fetch_quote_snapshot()
+    fundamentals = _fetch_fundamental_snapshot()
+    items = []
+    for stock in stock_index.values():
+        if name not in (stock.get("sectors") or []):
+            continue
+        code = str(stock.get("code", ""))
+        items.append(_public_stock(stock, quotes.get(code), fundamentals.get(code)))
+    if not items:
+        raise HTTPException(status_code=404, detail="未找到该行业")
+    summary = _industry_summary(name, items)
+    available = [item for item in items if item.get("profit_growth") is not None]
+    unavailable = [item for item in items if item.get("profit_growth") is None]
+    available.sort(key=lambda item: item.get("profit_growth"), reverse=True)
+    unavailable.sort(key=lambda item: str(item.get("code", "")))
+    return {
+        "ok": True,
+        "summary": summary,
+        "items": (available + unavailable)[:limit],
+        "total": len(items),
+    }
+
+
 @app.get("/api/stock/{code}")
 def stock_summary(code: str, response: Response) -> dict[str, Any]:
     response.headers["Cache-Control"] = "no-store"
@@ -477,12 +586,11 @@ def stock_summary(code: str, response: Response) -> dict[str, Any]:
         "ok": True,
         "stock": item,
         "peers": [
-            {
-                "code": peer.get("code"),
-                "name": peer.get("name"),
-                "profit_growth": peer.get("profit_growth"),
-                "date": peer.get("date"),
-            }
+            _public_stock(
+                peer,
+                quotes.get(str(peer.get("code", ""))),
+                fundamentals.get(str(peer.get("code", ""))),
+            )
             for peer in peers[:6]
         ],
     }
